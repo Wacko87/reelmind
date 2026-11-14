@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="es" class="dark" data-theme="claude">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>ReelMind — Tu biblioteca de trucos de IA</title>
+    
+    <!-- Meta PWA & iOS -->
+    <meta name="theme-color" content="#181816" id="theme-color-meta" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="ReelMind" />
+    <link rel="manifest" href="/manifest.json" />
+    <link rel="icon" type="image/svg+xml" href="/icons/icon.svg" />
+    <link rel="apple-touch-icon" href="/icons/icon-192.png" />
+    
+    <!-- Tipografías para los diferentes temas de IA -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;0,6..72,700;1,6..72,400&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  </head>
+  <body class="bg-theme-bg text-theme-text antialiased font-sans selection:bg-theme-accent selection:text-white min-h-screen transition-colors duration-200">
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+    <script>
+      // Cargar tema guardado antes de renderizar para evitar flash
+      const themeColors = {
+        claude: '#181816',
+        gemini: '#0b0f19',
+        chatgpt: '#171717',
+        openclaw: '#090a0d',
+        hermes: '#080a0d',
+        vercel: '#000000',
+        midjourney: '#0c0915'
+      };
+      const savedTheme = localStorage.getItem('reelmind_theme') || 'claude';
+      document.documentElement.setAttribute('data-theme', savedTheme);
+      const metaTheme = document.getElementById('theme-color-meta');
+      if (metaTheme && themeColors[savedTheme]) {
+        metaTheme.setAttribute('content', themeColors[savedTheme]);
+      }
+      
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+          navigator.serviceWorker.register('/sw.js').catch(err => {
+            console.log('SW registration skipped:', err);
+          });
+        });
+      }
+    </script>
+  </body>
+</html>

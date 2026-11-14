@@ -1,0 +1,32 @@
+<svg viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bgGrad5" x1="0" y1="0" x2="512" y2="512" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#1d112b"/>
+      <stop offset="50%" stop-color="#0f0717"/>
+      <stop offset="100%" stop-color="#06020a"/>
+    </linearGradient>
+    <linearGradient id="purpleGlow" x1="160" y1="120" x2="380" y2="400" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#c084fc"/>
+      <stop offset="50%" stop-color="#a855f7"/>
+      <stop offset="100%" stop-color="#e879f9"/>
+    </linearGradient>
+    <filter id="glow5" x="80" y="80" width="352" height="352" filterUnits="userSpaceOnUse">
+      <feGaussianBlur stdDeviation="18" result="blur"/>
+      <feComposite in="SourceGraphic" in2="blur" operator="over"/>
+    </filter>
+  </defs>
+
+  <rect x="16" y="16" width="480" height="480" rx="112" fill="url(#bgGrad5)" stroke="#3b1d5c" stroke-width="6"/>
+
+  <!-- Monograma R icónico en cinta cinemática -->
+  <g filter="url(#glow5)">
+    <path d="M165 125 L165 385 M165 125 L275 125 C330 125, 360 155, 360 210 C360 260, 325 285, 265 285 L165 285 M250 285 L355 385" 
+          stroke="url(#purpleGlow)" stroke-width="36" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+
+  <!-- Destello IA de 4 puntas centelleante en el bucle superior de la R -->
+  <path d="M255 170 L263 135 L271 170 L306 178 L271 186 L263 221 L255 186 L220 178 Z" fill="#ffffff"/>
+
+  <!-- Detalle sutil de nodo de datos en la pata de la R -->
+  <circle cx="310" cy="335" r="14" fill="#e879f9"/>
+</svg>

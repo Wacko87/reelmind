@@ -1,0 +1,165 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ========================================================
+   SISTEMA MULTI-TEMA INSPIRADO EN IDENTIDADES DE IA
+   ======================================================== */
+
+/* 1. CLAUDE (Anthropic) - Editorial, Terracota & Carbón Cálido */
+:root, :root[data-theme="claude"] {
+  --theme-bg: #181816;
+  --theme-surface: #22211e;
+  --theme-elevated: #282724;
+  --theme-border: #36342e;
+  --theme-border-subtle: #2b2a26;
+  --theme-text: #ece8de;
+  --theme-text-muted: #9e988b;
+  --theme-accent: #cc785c;
+  --theme-accent-hover: #d9856a;
+  --theme-accent-subtle: rgba(204, 120, 92, 0.15);
+  --theme-accent-border: rgba(204, 120, 92, 0.32);
+  --font-heading: 'Newsreader', Georgia, serif;
+}
+
+/* 2. GEMINI (Google) - Cósmico, Azul Espacial & Gradiente Cuántico */
+:root[data-theme="gemini"] {
+  --theme-bg: #0b0f19;
+  --theme-surface: #131929;
+  --theme-elevated: #1a233a;
+  --theme-border: #23304d;
+  --theme-border-subtle: #172138;
+  --theme-text: #e8ecf6;
+  --theme-text-muted: #8b99b5;
+  --theme-accent: #4285f4;
+  --theme-accent-hover: #5c97f7;
+  --theme-accent-subtle: rgba(66, 133, 244, 0.16);
+  --theme-accent-border: rgba(66, 133, 244, 0.38);
+  --font-heading: 'Plus Jakarta Sans', sans-serif;
+}
+
+/* 3. CHATGPT (OpenAI) - Carbón Neutro & Verde Esmeralda */
+:root[data-theme="chatgpt"] {
+  --theme-bg: #171717;
+  --theme-surface: #212121;
+  --theme-elevated: #2c2c2c;
+  --theme-border: #383838;
+  --theme-border-subtle: #292929;
+  --theme-text: #ececec;
+  --theme-text-muted: #949494;
+  --theme-accent: #10a37f;
+  --theme-accent-hover: #16b38c;
+  --theme-accent-subtle: rgba(16, 163, 127, 0.16);
+  --theme-accent-border: rgba(16, 163, 127, 0.36);
+  --font-heading: 'Inter', sans-serif;
+}
+
+/* 4. OPENCLAW - Negro Azabache Táctico & Carmesí Eléctrico */
+:root[data-theme="openclaw"] {
+  --theme-bg: #090a0d;
+  --theme-surface: #14161f;
+  --theme-elevated: #1d202c;
+  --theme-border: #2e3347;
+  --theme-border-subtle: #1b1e2a;
+  --theme-text: #f0f2f8;
+  --theme-text-muted: #868c9f;
+  --theme-accent: #ff2a55;
+  --theme-accent-hover: #ff476d;
+  --theme-accent-subtle: rgba(255, 42, 85, 0.16);
+  --theme-accent-border: rgba(255, 42, 85, 0.38);
+  --font-heading: 'Plus Jakarta Sans', sans-serif;
+}
+
+/* 5. HERMES AGENT - Consola de Inteligencia & Naranja Cobre */
+:root[data-theme="hermes"] {
+  --theme-bg: #080a0d;
+  --theme-surface: #11151b;
+  --theme-elevated: #181d26;
+  --theme-border: #252e3b;
+  --theme-border-subtle: #151c24;
+  --theme-text: #e6edf3;
+  --theme-text-muted: #798896;
+  --theme-accent: #f97316;
+  --theme-accent-hover: #fb923c;
+  --theme-accent-subtle: rgba(249, 115, 22, 0.16);
+  --theme-accent-border: rgba(249, 115, 22, 0.38);
+  --font-heading: 'JetBrains Mono', monospace;
+}
+
+/* 6. VERCEL / V0 - Negro OLED Absoluto & Azul Eléctrico */
+:root[data-theme="vercel"] {
+  --theme-bg: #000000;
+  --theme-surface: #0f0f0f;
+  --theme-elevated: #1a1a1a;
+  --theme-border: #282828;
+  --theme-border-subtle: #181818;
+  --theme-text: #ffffff;
+  --theme-text-muted: #888888;
+  --theme-accent: #0070f3;
+  --theme-accent-hover: #3291ff;
+  --theme-accent-subtle: rgba(0, 112, 243, 0.16);
+  --theme-accent-border: rgba(0, 112, 243, 0.38);
+  --font-heading: 'Inter', sans-serif;
+}
+
+/* 7. MIDJOURNEY - Púrpura Noche Profunda & Neón Lavanda */
+:root[data-theme="midjourney"] {
+  --theme-bg: #0c0915;
+  --theme-surface: #151025;
+  --theme-elevated: #1e1734;
+  --theme-border: #302452;
+  --theme-border-subtle: #251c42;
+  --theme-text: #f4effc;
+  --theme-text-muted: #978cb5;
+  --theme-accent: #a855f7;
+  --theme-accent-hover: #c084fc;
+  --theme-accent-subtle: rgba(168, 85, 247, 0.16);
+  --theme-accent-border: rgba(168, 85, 247, 0.38);
+  --font-heading: 'Plus Jakarta Sans', serif;
+}
+
+@layer base {
+  body {
+    @apply bg-theme-bg text-theme-text;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  }
+
+  h1, h2, h3, .font-heading, .font-serif {
+    font-family: var(--font-heading);
+  }
+}
+
+/* Scrollbar dinámico según el tema */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: var(--theme-bg);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--theme-border);
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--theme-text-muted);
+}
+
+/* Card adaptativa a temas */
+.claude-card {
+  background-color: var(--theme-surface);
+  border: 1px solid var(--theme-border);
+  transition: all 0.25s ease;
+}
+.claude-card:hover {
+  border-color: var(--theme-accent);
+  background-color: var(--theme-elevated);
+}
+
+/* Glass adaptativa */
+.claude-glass {
+  background-color: var(--theme-bg);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border-color: var(--theme-border);
+}

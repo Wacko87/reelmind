@@ -1,0 +1,31 @@
+<svg viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bgGrad4" x1="0" y1="0" x2="512" y2="512" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#241a14"/>
+      <stop offset="50%" stop-color="#140e0a"/>
+      <stop offset="100%" stop-color="#0a0604"/>
+    </linearGradient>
+    <linearGradient id="fireGrad" x1="180" y1="100" x2="360" y2="400" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#fb923c"/>
+      <stop offset="100%" stop-color="#ea580c"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="16" y="16" width="480" height="480" rx="112" fill="url(#bgGrad4)" stroke="#3f2719" stroke-width="6"/>
+
+  <!-- Reel 9:16 de fondo (desplazado) -->
+  <rect x="110" y="125" width="140" height="260" rx="28" stroke="#523220" stroke-width="12" fill="#18100b"/>
+
+  <!-- Reel 9:16 protagonista frontal -->
+  <rect x="185" y="105" width="170" height="300" rx="32" stroke="url(#fireGrad)" stroke-width="16" fill="#22140d"/>
+
+  <!-- Sinapsis / Impulso neuronal central -->
+  <path d="M225 210 Q270 170 315 210 T270 300" stroke="#fed7aa" stroke-width="14" stroke-linecap="round" fill="none"/>
+
+  <!-- Play button estilizado central -->
+  <path d="M255 230 L295 256 L255 282 Z" fill="#ffedd5"/>
+
+  <!-- Indicadores de formato corto / timeline -->
+  <line x1="220" y1="360" x2="270" y2="360" stroke="#f97316" stroke-width="10" stroke-linecap="round"/>
+  <line x1="290" y1="360" x2="325" y2="360" stroke="#7c3f19" stroke-width="10" stroke-linecap="round"/>
+</svg>

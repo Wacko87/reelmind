@@ -1,0 +1,16 @@
+services:
+  reelmind:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: reelmind
+    restart: unless-stopped
+    ports:
+      - "8085:8000"
+    environment:
+      - DATA_DIR=/data
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - GEMINI_MODEL=${GEMINI_MODEL:-gemini-2.5-flash}
+      - AUTH_PIN=${AUTH_PIN:-}
+    volumes:
+      - ./data:/data

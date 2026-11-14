@@ -1,0 +1,44 @@
+# Python & Backend
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.venv/
+backend/.venv/
+env/
+venv/
+ENV/
+
+# Base de datos y secretos (Crucial: no subir datos locales ni claves a GitHub)
+backend/data/*.db
+backend/data/*.db-shm
+backend/data/*.db-wal
+backend/data/.secret_key
+backend/data/temp/*
+data/*.db
+data/*.db-shm
+data/*.db-wal
+data/.secret_key
+data/temp/*
+.env
+.env.*
+!.env.example
+
+# Node & Frontend
+node_modules/
+frontend/node_modules/
+dist/
+frontend/dist/
+.npm
+npm-debug.log*
+
+# Sistema operativo e IDEs
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+.vscode/
+.idea/

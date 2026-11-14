@@ -1,0 +1,32 @@
+<svg viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bgGrad2" x1="0" y1="0" x2="512" y2="512" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#0c1424"/>
+      <stop offset="50%" stop-color="#070a14"/>
+      <stop offset="100%" stop-color="#030408"/>
+    </linearGradient>
+    <linearGradient id="geminiGrad" x1="100" y1="100" x2="420" y2="420" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#4285f4"/>
+      <stop offset="45%" stop-color="#9333ea"/>
+      <stop offset="100%" stop-color="#06b6d4"/>
+    </linearGradient>
+    <filter id="glow2" x="60" y="60" width="392" height="392" filterUnits="userSpaceOnUse">
+      <feGaussianBlur stdDeviation="20" result="blur"/>
+      <feComposite in="SourceGraphic" in2="blur" operator="over"/>
+    </filter>
+  </defs>
+
+  <rect x="16" y="16" width="480" height="480" rx="112" fill="url(#bgGrad2)" stroke="#1e293b" stroke-width="6"/>
+
+  <!-- Cinta cuántica de Möbius en forma de Play 3D -->
+  <g filter="url(#glow2)">
+    <path d="M160 140 C160 100, 220 100, 270 150 L390 270 C430 310, 400 370, 350 370 L170 370 C110 370, 90 310, 130 260 L240 145" 
+          stroke="url(#geminiGrad)" stroke-width="32" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+
+  <!-- Núcleo de energía cuántica central -->
+  <circle cx="256" cy="256" r="24" fill="#a8c7fa" filter="drop-shadow(0 0 16px #4285f4)"/>
+
+  <!-- Sparkle de DeepMind en cuadrante superior -->
+  <path d="M256 120 Q256 180 316 180 Q256 180 256 240 Q256 180 196 180 Q256 180 256 120 Z" fill="#ffffff" opacity="0.95"/>
+</svg>
