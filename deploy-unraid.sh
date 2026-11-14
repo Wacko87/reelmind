@@ -12,7 +12,7 @@ echo "🚀 Desplegando ReelMind en Unraid ($UNRAID_HOST)..."
 # 1. Crear directorio remoto en el pool de caché NVMe
 ssh "$UNRAID_USER@$UNRAID_HOST" "mkdir -p $REMOTE_DIR/data"
 
-# 2. Sincronizar archivos excluyendo temporales, node_modules y venv
+# 2. Sincronizar archivos excluyendo datos persistentes, temporales y dependencias
 echo "📦 Sincronizando archivos hacia $REMOTE_DIR..."
 rsync -avz --delete \
   --exclude 'node_modules' \
@@ -20,14 +20,19 @@ rsync -avz --delete \
   --exclude '__pycache__' \
   --exclude '*.pyc' \
   --exclude '.git' \
-  --exclude 'backend/data/temp' \
-  --exclude 'backend/data/reelmind.db' \
+  --exclude 'data' \
+  --exclude 'data/' \
+  --exclude 'data/**' \
+  --exclude 'backend/data' \
+  --exclude 'backend/data/**' \
+  --exclude '.env' \
+  --exclude '.env.*' \
   --exclude 'dist' \
   "$LOCAL_DIR/" "$UNRAID_USER@$UNRAID_HOST:$REMOTE_DIR/"
 
-# 3. Construir y levantar el contenedor Docker en Unraid
+# 3. Construir y levantar el contenedor Docker en Unraid preservando volúmenes
 echo "🐳 Levantando contenedor Docker en Unraid..."
-ssh "$UNRAID_USER@$UNRAID_HOST" "cd $REMOTE_DIR && docker compose down 2>/dev/null || true && docker compose up -d --build"
+ssh "$UNRAID_USER@$UNRAID_HOST" "cd $REMOTE_DIR && docker compose up -d --build"
 
 echo "✅ Despliegue completado con éxito."
 echo "🌐 ReelMind está disponible en red br0.11: http://192.168.11.237:8000"
