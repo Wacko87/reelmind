@@ -367,8 +367,8 @@ export const AddReelModal: React.FC<AddReelModalProps> = ({
                   }}
                   placeholder={
                     mediaType === 'video'
-                      ? 'https://www.youtube.com/watch?v=...'
-                      : 'https://www.tiktok.com/@... o https://www.instagram.com/reel/...'
+                      ? 'https://www.youtube.com/watch?v=... o https://www.facebook.com/watch/?v=...'
+                      : 'TikTok, Instagram Reels, Facebook Reels, YouTube Shorts...'
                   }
                   required
                   autoFocus

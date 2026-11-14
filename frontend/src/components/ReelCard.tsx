@@ -51,6 +51,8 @@ export const ReelCard: React.FC<ReelCardProps> = React.memo(({
         return { label: 'Instagram' };
       case 'youtube':
         return { label: isLongVideo ? 'YouTube' : 'Shorts' };
+      case 'facebook':
+        return { label: 'Facebook' };
       default:
         return { label: 'Web' };
     }

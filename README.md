@@ -2,7 +2,7 @@
 
 # 🧠 ReelMind — AI Video Vault & Prompt Studio
 
-**Tu segundo cerebro inteligente para capturar, analizar, optimizar y organizar trucos, prompts y herramientas desde TikTok, Instagram Reels y YouTube.**
+**Tu segundo cerebro inteligente para capturar, analizar, optimizar y organizar trucos, prompts y herramientas desde TikTok, Instagram Reels, Facebook y YouTube.**
 
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115+-009688?style=flat-square&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
 [![React 19](https://img.shields.io/badge/React-19.0-20232A?style=flat-square&logo=react&logoColor=61DAFB)](https://react.dev)
@@ -23,7 +23,7 @@
 
 ## 💡 ¿Por qué ReelMind?
 
-A todos nos pasa: vemos un reel genial en **TikTok**, **Instagram** o **YouTube** con una herramienta de IA revolucionaria, un mega-prompt para Midjourney o un truco de automatización... lo guardamos en la app nativa y **se pierde para siempre** en un pozo sin fondo.
+A todos nos pasa: vemos un reel genial en **TikTok**, **Instagram Reels**, **Facebook** o **YouTube** con una herramienta de IA revolucionaria, un mega-prompt para Midjourney o un truco de automatización... lo guardamos en la app nativa y **se pierde para siempre** en un pozo sin fondo.
 
 **ReelMind** soluciona esto de raíz:
 1. **Compartes el vídeo directamente desde tu móvil** o con **1 clic desde tu navegador de escritorio**.

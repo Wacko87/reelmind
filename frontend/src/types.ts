@@ -19,7 +19,7 @@ export interface Folder {
 export interface Reel {
   id: string;
   url: string;
-  platform: 'tiktok' | 'instagram' | 'youtube' | 'twitter' | 'other';
+  platform: 'tiktok' | 'instagram' | 'youtube' | 'twitter' | 'facebook' | 'other';
   author?: string;
   author_url?: string;
   original_title?: string;

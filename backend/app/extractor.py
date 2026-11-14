@@ -15,12 +15,16 @@ ALLOWED_DOMAINS = (
     'youtu.be',
     'x.com',
     'twitter.com',
+    'facebook.com',
+    'fb.watch',
+    'fb.com',
 )
 
 TRACKING_PARAMS = {
     'igsh', 'utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 
     'utm_content', 'si', 'feature', 'fbclid', 'gclid', '_t', '_r',
-    'share_id', 'ref', 'source', 'sender_device'
+    'share_id', 'ref', 'source', 'sender_device',
+    'mibextid', 'sfnsn', 'rdid', 'refid', '__cft__', '__tn__', 'paipv'
 }
 
 def validate_and_clean_url(url: str) -> str:
@@ -56,7 +60,7 @@ def validate_and_clean_url(url: str) -> str:
     is_allowed = any(hostname == domain or hostname.endswith('.' + domain) for domain in ALLOWED_DOMAINS)
     if not is_allowed:
         raise ValueError(
-            f"El dominio '{hostname}' no está permitido. ReelMind solo admite vídeos de TikTok, Instagram, YouTube y X/Twitter."
+            f"El dominio '{hostname}' no está permitido. ReelMind admite vídeos de TikTok, Instagram, YouTube, Facebook y X/Twitter."
         )
 
     # 3. Limpieza de Parámetros de Telemetría/Tracking
@@ -87,6 +91,8 @@ def detect_platform(url: str) -> str:
         return "instagram"
     elif "youtube.com" in url_lower or "youtu.be" in url_lower:
         return "youtube"
+    elif "facebook.com" in url_lower or "fb.watch" in url_lower or "fb.com" in url_lower:
+        return "facebook"
     elif "x.com" in url_lower or "twitter.com" in url_lower:
         return "twitter"
     return "other"
@@ -157,7 +163,13 @@ def extract_video_and_audio(url: str, requested_type: str = "auto") -> VideoExtr
             'socket_timeout': 15,
             'retries': 2,
             'http_headers': base_headers,
-            'allowed_extractors': ['youtube', 'youtube:*', 'tiktok', 'instagram', 'twitter', 'twitter:*', 'x', 'x:*'],
+            'allowed_extractors': [
+                'youtube', 'youtube:*', 
+                'tiktok', 
+                'instagram', 
+                'twitter', 'twitter:*', 'x', 'x:*',
+                'facebook', 'facebook:*', 'FacebookPluginsVideo', 'FacebookRedirectURL'
+            ],
         }
         if cookies_path and os.path.exists(cookies_path):
             ydl_opts_meta['cookiefile'] = cookies_path
@@ -233,7 +245,13 @@ def extract_video_and_audio(url: str, requested_type: str = "auto") -> VideoExtr
             'retries': 2,
             'max_filesize': settings.MAX_FILESIZE_BYTES, # 50 MB
             'http_headers': base_headers,
-            'allowed_extractors': ['youtube', 'youtube:*', 'tiktok', 'instagram', 'twitter', 'twitter:*', 'x', 'x:*'],
+            'allowed_extractors': [
+                'youtube', 'youtube:*', 
+                'tiktok', 
+                'instagram', 
+                'twitter', 'twitter:*', 'x', 'x:*',
+                'facebook', 'facebook:*', 'FacebookPluginsVideo', 'FacebookRedirectURL'
+            ],
         }
         if cookies_path and os.path.exists(cookies_path):
             ydl_opts_video['cookiefile'] = cookies_path
