@@ -1,4 +1,4 @@
-const CACHE_NAME = 'reelmind-v2';
+const CACHE_NAME = 'reelmind-v3';
 
 const STATIC_ASSETS = [
   '/',
@@ -35,6 +35,22 @@ self.addEventListener('fetch', (event) => {
 
   // Las peticiones a la API nunca se cachean en el Service Worker
   if (url.pathname.startsWith('/api/')) {
+    return;
+  }
+
+  // Para navegación (HTML principal): Network-First para que los despliegues se apliquen de inmediato
+  if (event.request.mode === 'navigate') {
+    event.respondWith(
+      fetch(event.request)
+        .then((networkResponse) => {
+          if (networkResponse && networkResponse.status === 200) {
+            const responseToCache = networkResponse.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, responseToCache));
+          }
+          return networkResponse;
+        })
+        .catch(() => caches.match(event.request))
+    );
     return;
   }
 

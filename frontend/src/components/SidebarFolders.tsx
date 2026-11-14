@@ -328,12 +328,13 @@ export const SidebarFolders: React.FC<SidebarFoldersProps> = ({
             className="fixed inset-0 bg-black/60 backdrop-blur-sm"
             onClick={onCloseMobile}
           />
-          <div className="relative w-72 max-w-[85vw] bg-claude-bg border-r border-claude-border p-5 h-full z-50 flex flex-col shadow-2xl animate-in slide-in-from-left duration-200">
+          <div className="relative w-72 max-w-[85vw] bg-claude-bg border-r border-claude-border p-5 h-full z-50 flex flex-col shadow-2xl animate-in slide-in-from-left duration-200 pt-[calc(1.25rem+env(safe-area-inset-top,0px))] pb-[calc(1.25rem+env(safe-area-inset-bottom,0px))]">
             <div className="flex items-center justify-between pb-4 border-b border-claude-border mb-4">
               <span className="font-serif font-semibold text-base text-claude-text">Temas & Carpetas</span>
               <button
+                type="button"
                 onClick={onCloseMobile}
-                className="p-1.5 rounded-lg text-claude-textMuted hover:text-claude-text hover:bg-claude-surface"
+                className="p-1.5 rounded-lg text-claude-textMuted hover:text-claude-text hover:bg-claude-surface cursor-pointer touch-manipulation"
               >
                 <X className="w-4 h-4" />
               </button>

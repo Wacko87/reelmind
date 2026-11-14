@@ -301,7 +301,7 @@ export const App: React.FC = () => {
   }
 
   return (
-    <div className="min-h-screen flex flex-col bg-claude-bg text-claude-text">
+    <div className="min-h-screen flex flex-col bg-claude-bg text-claude-text overflow-x-hidden pb-[env(safe-area-inset-bottom,0px)]">
       
       {/* Barra de Navegación */}
       <Navbar
