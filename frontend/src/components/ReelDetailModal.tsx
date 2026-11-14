@@ -49,6 +49,14 @@ export const ReelDetailModal: React.FC<ReelDetailModalProps> = ({
   const [isDeleting, setIsDeleting] = useState(false);
   const [isExportingMd, setIsExportingMd] = useState(false);
 
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [onClose]);
+
   // Estados de optimización de prompts
   const [activeOptimizerIndex, setActiveOptimizerIndex] = useState<number | null>(null);
   const [optimizerMode, setOptimizerMode] = useState<'variations' | 'adapt_model'>('variations');
@@ -192,6 +200,7 @@ export const ReelDetailModal: React.FC<ReelDetailModalProps> = ({
       role="dialog"
       aria-modal="true"
       aria-labelledby="detail-modal-title"
+      onClick={onClose}
     >
       <div 
         className="relative w-full max-w-3xl bg-claude-surface border border-claude-border rounded-3xl shadow-2xl overflow-hidden my-auto flex flex-col max-h-[90vh]"

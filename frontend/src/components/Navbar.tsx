@@ -67,7 +67,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             title="Configuración de IA Gemini"
           >
             <div className={`w-1.5 h-1.5 rounded-full ${settings?.has_gemini_key ? 'bg-claude-accent' : 'bg-amber-400'}`} />
-            <span className="text-xs text-claude-textMuted">{settings?.has_gemini_key ? 'Gemini 2.5 Flash' : 'Configurar Clave'}</span>
+            <span className="text-xs text-claude-textMuted">{settings?.has_gemini_key ? 'Gemini IA' : 'Configurar Clave'}</span>
           </button>
 
           {/* Botón Preguntar a la Bóveda con IA */}

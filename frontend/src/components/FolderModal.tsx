@@ -108,6 +108,7 @@ export const FolderModal: React.FC<FolderModalProps> = ({
       className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-in fade-in duration-200"
       role="dialog"
       aria-modal="true"
+      onClick={() => !loading && onClose()}
     >
       <div 
         className="w-full max-w-md bg-claude-surface border border-claude-border rounded-3xl shadow-2xl p-6 relative"

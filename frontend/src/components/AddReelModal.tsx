@@ -155,6 +155,7 @@ export const AddReelModal: React.FC<AddReelModalProps> = ({
       role="dialog"
       aria-modal="true"
       aria-labelledby="add-modal-title"
+      onClick={() => !loading && onClose()}
     >
       <div 
         className="w-full max-w-lg bg-claude-surface border border-claude-border rounded-3xl shadow-2xl p-6 relative"

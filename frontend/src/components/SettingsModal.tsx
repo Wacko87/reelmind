@@ -200,6 +200,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-200"
       role="dialog"
       aria-modal="true"
+      onClick={() => !saving && onClose()}
     >
       <div 
         className="w-full max-w-2xl bg-claude-surface border border-claude-border rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh] relative transition-colors duration-200"

@@ -182,7 +182,7 @@ export const App: React.FC = () => {
 
   const handleReelAdded = (newReel: Reel) => {
     setReels((prev) => [newReel, ...prev]);
-    setSelectedReel(newReel);
+    // No auto-abrir setSelectedReel(newReel) para evitar bloquear la pantalla y el menú superior en móviles
     loadData();
     loadFolders();
   };

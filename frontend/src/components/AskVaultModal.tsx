@@ -71,6 +71,7 @@ export const AskVaultModal: React.FC<AskVaultModalProps> = ({
       className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-200"
       role="dialog"
       aria-modal="true"
+      onClick={() => !loading && onClose()}
     >
       <div 
         className="w-full max-w-2xl bg-claude-surface border border-claude-border rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[88vh] relative"
@@ -87,7 +88,7 @@ export const AskVaultModal: React.FC<AskVaultModalProps> = ({
                 Preguntar a tu Bóveda
               </h3>
               <p className="text-xs text-claude-textMuted font-sans">
-                Asistente RAG inteligente impulsado por Gemini 2.5 Flash
+                Asistente RAG inteligente impulsado por IA Gemini
               </p>
             </div>
           </div>
