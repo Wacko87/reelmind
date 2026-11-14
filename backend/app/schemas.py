@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import List, Optional
+from typing import List, Optional, Union
 
 class LoginRequest(BaseModel):
     pin: str = Field(..., description="PIN o contraseña de acceso configurada")
@@ -62,7 +62,7 @@ class ReelResponse(BaseModel):
     author_url: Optional[str] = None
     original_title: Optional[str] = None
     thumbnail_url: Optional[str] = None
-    duration: Optional[int] = 0
+    duration: Optional[Union[int, float]] = 0
     title: str
     summary: str
     ai_tools: List[str]
