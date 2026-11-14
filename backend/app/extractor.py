@@ -3,6 +3,7 @@ import uuid
 import re
 import glob
 import ipaddress
+import urllib.request
 from typing import Dict, Any, Optional
 from urllib.parse import urlparse, urlunparse, parse_qsl, urlencode
 import yt_dlp
@@ -26,6 +27,58 @@ TRACKING_PARAMS = {
     'share_id', 'ref', 'source', 'sender_device',
     'mibextid', 'sfnsn', 'rdid', 'refid', '__cft__', '__tn__', 'paipv'
 }
+
+def resolve_facebook_url(url: str) -> str:
+    """
+    Facebook en apps móviles genera URLs de compartir como:
+    - https://www.facebook.com/share/r/<token>
+    - https://www.facebook.com/share/v/<token>
+    - https://www.facebook.com/share/p/<token>
+    - https://fb.watch/<token>
+    
+    yt-dlp no reconoce directamente el path /share/r/ sin resolver.
+    Esta función extrae el enlace canónico (og:url / canonical) o el reel ID
+    resolviendo la petición HTTP de forma segura.
+    """
+    url_lower = url.lower()
+    if not ('facebook.com/share/' in url_lower or 'fb.watch/' in url_lower):
+        return url
+
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'es-ES,es;q=0.9,en;q=0.8'
+    }
+
+    try:
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            final_url = resp.geturl()
+            if any(k in final_url for k in ('/reel/', '/watch/', '/videos/')):
+                return final_url
+
+            refresh = resp.headers.get('refresh', '')
+            match_ref = re.search(r'(?:fullscreen_video/|video_id=|v=|reel/|videos/)(\d+)', refresh)
+            if match_ref:
+                return f"https://facebook.com/reel/{match_ref.group(1)}"
+
+            body = resp.read(65536).decode('utf-8', errors='ignore')
+            
+            og_match = re.search(r'property=[\"\']og:url[\"\']\s+content=[\"\']([^\"\']+)[\"\']', body)
+            if og_match and any(k in og_match.group(1) for k in ('/reel/', '/watch', '/videos/')):
+                return og_match.group(1)
+
+            canon_match = re.search(r'rel=[\"\']canonical[\"\']\s+href=[\"\']([^\"\']+)[\"\']', body)
+            if canon_match and any(k in canon_match.group(1) for k in ('/reel/', '/watch', '/videos/')):
+                return canon_match.group(1)
+
+            reel_match = re.search(r'facebook\.com/reel/(\d+)', body)
+            if reel_match:
+                return f"https://facebook.com/reel/{reel_match.group(1)}"
+    except Exception:
+        pass
+
+    return url
 
 def validate_and_clean_url(url: str) -> str:
     """
@@ -74,7 +127,7 @@ def validate_and_clean_url(url: str) -> str:
     if clean_netloc.startswith("www."):
         clean_netloc = clean_netloc[4:]
 
-    return urlunparse((
+    cleaned = urlunparse((
         "https",
         clean_netloc,
         clean_path,
@@ -82,6 +135,15 @@ def validate_and_clean_url(url: str) -> str:
         urlencode(filtered_queries),
         ''
     ))
+
+    # Si es una URL de compartir de Facebook (/share/r/, /share/v/, fb.watch), resolver a enlace canónico de reel/vídeo
+    if 'facebook.com/share/' in cleaned.lower() or 'fb.watch/' in cleaned.lower():
+        resolved = resolve_facebook_url(cleaned)
+        if resolved != cleaned:
+            # Re-normalizar URL canónica
+            return validate_and_clean_url(resolved)
+
+    return cleaned
 
 def detect_platform(url: str) -> str:
     url_lower = url.lower()
@@ -168,7 +230,7 @@ def extract_video_and_audio(url: str, requested_type: str = "auto") -> VideoExtr
                 'tiktok', 
                 'instagram', 
                 'twitter', 'twitter:*', 'x', 'x:*',
-                'facebook', 'facebook:*', 'FacebookPluginsVideo', 'FacebookRedirectURL'
+                'facebook', 'facebook:reel', 'facebook:*', 'FacebookPluginsVideo', 'FacebookRedirectURL'
             ],
         }
         if cookies_path and os.path.exists(cookies_path):
@@ -250,7 +312,7 @@ def extract_video_and_audio(url: str, requested_type: str = "auto") -> VideoExtr
                 'tiktok', 
                 'instagram', 
                 'twitter', 'twitter:*', 'x', 'x:*',
-                'facebook', 'facebook:*', 'FacebookPluginsVideo', 'FacebookRedirectURL'
+                'facebook', 'facebook:reel', 'facebook:*', 'FacebookPluginsVideo', 'FacebookRedirectURL'
             ],
         }
         if cookies_path and os.path.exists(cookies_path):
