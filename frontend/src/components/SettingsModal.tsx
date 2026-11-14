@@ -584,7 +584,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               </div>
 
               <div className="text-[11px] text-claude-textMuted font-sans bg-claude-bg p-3.5 rounded-xl border border-claude-borderSubtle">
-                💡 <strong>Tip para Homelab / Obsidian:</strong> Puedes descomprimir este archivo directamente en tu carpeta de Obsidian en Mac (<code className="text-claude-text font-mono">/Users/wacko87/Desktop/Proyectos Antigravity/Antigravity/</code>) para tener acceso offline total a tus trucos de IA.
+                ⚡ <strong>Sincronización Automática Activa:</strong> Tu Mac mini ejecuta un demonio en segundo plano (LaunchAgent) que sincroniza automáticamente cada nuevo reel directamente hacia tu bóveda de Obsidian en iCloud (<code className="text-claude-text font-mono">🧠 Bóveda ReelMind/</code>), disponible al instante en Mac, iPhone e iPad.
               </div>
             </div>
           )}
