@@ -282,13 +282,14 @@ async def login(data: LoginRequest, request: Request, response: Response):
     login_attempts.pop(client_ip, None)
 
     token = create_auth_token()
+    is_secure = request.url.scheme == "https" or request.headers.get("x-forwarded-proto") == "https"
     response.set_cookie(
         key="reelmind_auth",
         value=token,
         max_age=30 * 24 * 3600,
         httponly=True,
         samesite="lax",
-        secure=False
+        secure=is_secure
     )
     return {"success": True, "token": token, "message": "Autenticado con éxito"}
 
