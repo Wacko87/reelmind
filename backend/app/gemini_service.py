@@ -50,6 +50,7 @@ Reglas:
 """
 
 _gemini_clients: dict = {}
+FALLBACK_MODELS = ["gemini-3.1-flash-lite", "gemini-3.5-flash", "gemini-3.8-flash", "gemini-2.5-flash"]
 
 def get_gemini_client(api_key: str) -> genai.Client:
     """Reutiliza clientes de Gemini para evitar fugas de pools de conexión httpx/client.aio."""
@@ -57,10 +58,49 @@ def get_gemini_client(api_key: str) -> genai.Client:
         _gemini_clients[api_key] = genai.Client(api_key=api_key)
     return _gemini_clients[api_key]
 
+async def generate_with_fallback(
+    client: genai.Client,
+    contents,
+    config: types.GenerateContentConfig,
+    primary_model: str = "gemini-3.1-flash-lite",
+    max_retries: int = 2
+):
+    """
+    Intenta la generación con el modelo primario y si falla con 404 (deprecado) o 503 (sobrecarga),
+    hace failover automático y transparente a los siguientes modelos de la lista FALLBACK_MODELS.
+    """
+    models_to_try = [primary_model] + [m for m in FALLBACK_MODELS if m != primary_model]
+    last_error = None
+
+    for model in models_to_try:
+        backoff = 1.5
+        for attempt in range(max_retries):
+            try:
+                response = await client.aio.models.generate_content(
+                    model=model,
+                    contents=contents,
+                    config=config,
+                )
+                if response and response.candidates:
+                    return response
+            except errors.APIError as api_err:
+                last_error = api_err
+                if api_err.code in (404, 503, 429):
+                    if attempt < max_retries - 1 and api_err.code in (429, 503):
+                        await asyncio.sleep(backoff)
+                        backoff *= 2
+                        continue
+                    break
+            except Exception as e:
+                last_error = e
+                break
+
+    raise RuntimeError(f"Error en API Gemini: {str(last_error)}")
+
 async def analyze_video_with_gemini(
     extraction: VideoExtractionResult,
     api_key: str,
-    model_name: str = "gemini-2.5-flash"
+    model_name: str = "gemini-3.1-flash-lite"
 ) -> GeminiAnalysisResult:
     """
     Análisis ligero y económico en tokens para vídeos largos (>10 min):
@@ -92,30 +132,18 @@ async def analyze_video_with_gemini(
         "Genera una ficha resumen técnica concisa, útil y en español con las herramientas tratadas y los puntos clave del vídeo."
     )
 
-    max_retries = 3
-    backoff = 2.0
-    response = None
-
-    for attempt in range(max_retries):
-        try:
-            response = await client.aio.models.generate_content(
-                model=model_name,
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    system_instruction=SYSTEM_INSTRUCTION_LONG_VIDEO,
-                    response_mime_type="application/json",
-                    response_schema=GeminiAnalysisResult,
-                    temperature=0.2,
-                    max_output_tokens=1024,
-                ),
-            )
-            break
-        except errors.APIError as api_err:
-            if api_err.code in (429, 503) and attempt < max_retries - 1:
-                await asyncio.sleep(backoff)
-                backoff *= 2
-                continue
-            raise RuntimeError(f"Error en API Gemini [{api_err.code}]: {api_err.message}")
+    response = await generate_with_fallback(
+        client=client,
+        contents=prompt,
+        config=types.GenerateContentConfig(
+            system_instruction=SYSTEM_INSTRUCTION_LONG_VIDEO,
+            response_mime_type="application/json",
+            response_schema=GeminiAnalysisResult,
+            temperature=0.2,
+            max_output_tokens=1024,
+        ),
+        primary_model=model_name
+    )
 
     if not response or not response.candidates:
         raise ValueError("Gemini no devolvió ninguna respuesta para el vídeo.")
@@ -139,7 +167,7 @@ async def analyze_video_with_gemini(
 async def analyze_reel_with_gemini(
     extraction: VideoExtractionResult,
     api_key: str,
-    model_name: str = "gemini-2.5-flash"
+    model_name: str = "gemini-3.1-flash-lite"
 ) -> GeminiAnalysisResult:
     if not api_key:
         raise ValueError("Se requiere una API Key de Google Gemini válida.")
@@ -161,9 +189,10 @@ async def analyze_reel_with_gemini(
         media_target = extraction.media_path or extraction.audio_path
         if media_target and os.path.exists(media_target):
             # Subida no bloqueante a Google Files API con mime_type correcto (video/mp4 o audio/mp3)
+            target_mime = extraction.mime_type or "video/mp4"
             uploaded_file = await client.aio.files.upload(
                 file=media_target,
-                mime_type=extraction.mime_type or "video/mp4"
+                config=types.UploadFileConfig(mime_type=target_mime)
             )
             
             # Verificar si el archivo está listo antes de inferir
@@ -203,31 +232,18 @@ async def analyze_reel_with_gemini(
             )
             contents.append(prompt)
 
-        # Reintentos con exponential backoff ante límites de cuota (429) o 503
-        max_retries = 3
-        backoff = 2.0
-        response = None
-
-        for attempt in range(max_retries):
-            try:
-                response = await client.aio.models.generate_content(
-                    model=model_name,
-                    contents=contents,
-                    config=types.GenerateContentConfig(
-                        system_instruction=SYSTEM_INSTRUCTION,
-                        response_mime_type="application/json",
-                        response_schema=GeminiAnalysisResult,
-                        temperature=0.2,
-                        max_output_tokens=1024,
-                    ),
-                )
-                break
-            except errors.APIError as api_err:
-                if api_err.code in (429, 503) and attempt < max_retries - 1:
-                    await asyncio.sleep(backoff)
-                    backoff *= 2
-                    continue
-                raise RuntimeError(f"Error en API Gemini [{api_err.code}]: {api_err.message}")
+        response = await generate_with_fallback(
+            client=client,
+            contents=contents,
+            config=types.GenerateContentConfig(
+                system_instruction=SYSTEM_INSTRUCTION,
+                response_mime_type="application/json",
+                response_schema=GeminiAnalysisResult,
+                temperature=0.2,
+                max_output_tokens=1024,
+            ),
+            primary_model=model_name
+        )
 
         if not response or not response.candidates:
             raise ValueError("Gemini no devolvió ninguna respuesta (respuesta vacía o bloqueada por filtros).")
@@ -261,7 +277,7 @@ async def optimize_prompt_with_gemini(
     mode: str = "variations",
     target_model: Optional[str] = None,
     api_key: str = "",
-    model_name: str = "gemini-2.5-flash"
+    model_name: str = "gemini-3.1-flash-lite"
 ) -> PromptOptimizeResponse:
     """
     Genera 3 variaciones creativas o adapta un prompt a un modelo concreto (Midjourney, Flux, etc.).
@@ -286,8 +302,8 @@ async def optimize_prompt_with_gemini(
 
     user_query = f"PROMPT ORIGINAL:\n{prompt}\n\nMODO: {mode}\nMODELO DESTINO: {target_model or 'No especificado'}\n\nGenera exactamente 3 variaciones optimizadas."
 
-    response = await client.aio.models.generate_content(
-        model=model_name,
+    response = await generate_with_fallback(
+        client=client,
         contents=user_query,
         config=types.GenerateContentConfig(
             system_instruction=system_instruction,
@@ -296,6 +312,7 @@ async def optimize_prompt_with_gemini(
             temperature=0.7,
             max_output_tokens=1500,
         ),
+        primary_model=model_name
     )
 
     if response.parsed and isinstance(response.parsed, PromptOptimizeResponse):
@@ -310,7 +327,7 @@ async def ask_vault_with_gemini(
     question: str,
     vault_items: list[dict],
     api_key: str,
-    model_name: str = "gemini-2.5-flash"
+    model_name: str = "gemini-3.1-flash-lite"
 ) -> VaultAskResponse:
     """
     RAG ligero sobre las fichas guardadas en la bóveda de ReelMind.
@@ -371,8 +388,8 @@ async def ask_vault_with_gemini(
 
     user_query = f"<vault_dataset>\n{vault_context}\n</vault_dataset>\n\n<user_question>\n{question}\n</user_question>"
 
-    response = await client.aio.models.generate_content(
-        model=model_name,
+    response = await generate_with_fallback(
+        client=client,
         contents=user_query,
         config=types.GenerateContentConfig(
             system_instruction=system_instruction,
@@ -381,6 +398,7 @@ async def ask_vault_with_gemini(
             temperature=0.3,
             max_output_tokens=2048,
         ),
+        primary_model=model_name
     )
 
     if response.parsed and isinstance(response.parsed, VaultAskResponse):
