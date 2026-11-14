@@ -20,6 +20,7 @@ import aiosqlite
 from .config import settings
 from .database import get_db, init_db, get_connection, DB_PATH
 from .auth import require_auth, create_auth_token, verify_token_string
+from .security import encrypt_secret, decrypt_secret, verify_pin
 from .schemas import (
     ReelAnalyzeRequest,
     ReelResponse,
@@ -78,6 +79,20 @@ login_attempts: Dict[str, List[float]] = {}
 @app.on_event("startup")
 async def on_startup():
     await init_db()
+    
+    # Migración transparente: cifrar con Fernet (AES-128-CBC) cualquier API key en texto plano
+    try:
+        db = await get_connection()
+        cursor = await db.execute("SELECT value FROM app_settings WHERE key = 'gemini_api_key'")
+        row = await cursor.fetchone()
+        if row and row["value"] and not row["value"].startswith("gAAAAA"):
+            encrypted = encrypt_secret(row["value"])
+            await db.execute("UPDATE app_settings SET value = ? WHERE key = 'gemini_api_key'", (encrypted,))
+            await db.commit()
+        await db.close()
+    except Exception as e:
+        print(f"Aviso en migración de cifrado: {e}")
+
     temp_dir = os.path.join(settings.DATA_DIR, "temp")
     if os.path.exists(temp_dir):
         now_ts = time.time()
@@ -94,7 +109,7 @@ async def get_active_api_key() -> str:
         cursor = await db.execute("SELECT value FROM app_settings WHERE key = 'gemini_api_key'")
         row = await cursor.fetchone()
         if row and row["value"]:
-            return row["value"]
+            return decrypt_secret(row["value"])
     finally:
         await db.close()
     return settings.GEMINI_API_KEY
@@ -272,8 +287,8 @@ async def login(data: LoginRequest, request: Request, response: Response):
             detail="Demasiados intentos fallidos. Espera 60 segundos antes de volver a intentar."
         )
 
-    # Comparación segura en tiempo constante
-    if not hmac.compare_digest(data.pin.strip(), settings.AUTH_PIN.strip()):
+    # Comparación segura en tiempo constante (soporta hash PBKDF2 y texto plano)
+    if not verify_pin(data.pin, settings.AUTH_PIN):
         attempts.append(now_ts)
         login_attempts[client_ip] = attempts
         raise HTTPException(status_code=401, detail="PIN o contraseña de acceso incorrecta")
@@ -763,7 +778,7 @@ async def get_stats(db: aiosqlite.Connection = Depends(get_db)):
 async def get_settings(db: aiosqlite.Connection = Depends(get_db)):
     cursor = await db.execute("SELECT value FROM app_settings WHERE key = 'gemini_api_key'")
     row = await cursor.fetchone()
-    stored_key = row["value"] if row else ""
+    stored_key = decrypt_secret(row["value"]) if (row and row["value"]) else ""
     active_key = stored_key or settings.GEMINI_API_KEY
     masked_key = ""
     if active_key:
@@ -780,16 +795,18 @@ async def get_settings(db: aiosqlite.Connection = Depends(get_db)):
 async def save_settings(data: AppSettingsSchema, db: aiosqlite.Connection = Depends(get_db)):
     if data.gemini_api_key is not None:
         key_val = data.gemini_api_key.strip()
+        # Cifrar simétricamente con AES-Fernet antes de guardar en SQLite
+        encrypted_val = encrypt_secret(key_val) if key_val else ""
         await db.execute(
             """
             INSERT INTO app_settings (key, value) VALUES ('gemini_api_key', ?)
             ON CONFLICT(key) DO UPDATE SET value = excluded.value
             """,
-            (key_val,)
+            (encrypted_val,)
         )
         await db.commit()
 
-    return {"success": True, "message": "Configuración guardada"}
+    return {"success": True, "message": "Configuración guardada de forma cifrada"}
 
 # ==========================================
 # RUTAS DE EXPORTACIÓN OBSIDIAN & ASISTENTE IA

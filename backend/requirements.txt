@@ -8,3 +8,4 @@ aiosqlite>=0.20.0
 python-multipart>=0.0.18
 httpx>=0.28.0
 python-dotenv>=1.0.1
+cryptography>=44.0.0
