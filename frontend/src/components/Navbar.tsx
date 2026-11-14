@@ -24,39 +24,37 @@ export const Navbar: React.FC<NavbarProps> = ({
   settings,
 }) => {
   return (
-    <header className="sticky top-0 z-30 claude-glass border-b border-claude-border">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+    <header className="sticky top-0 z-30 claude-glass border-b border-claude-border w-full">
+      <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 h-14 sm:h-16 flex items-center justify-between gap-1.5 sm:gap-4">
         
         {/* Brand & Mobile Sidebar Toggle */}
-        <div className="flex items-center gap-3.5">
+        <div className="flex items-center gap-1.5 sm:gap-3 min-w-0">
           
           <button
             onClick={onToggleSidebarMobile}
-            className="lg:hidden p-2 rounded-xl text-claude-textMuted hover:text-claude-text hover:bg-claude-surface transition-colors"
+            className="lg:hidden p-1.5 sm:p-2 rounded-xl text-claude-textMuted hover:text-claude-text hover:bg-claude-surface transition-colors flex-shrink-0"
             title="Abrir carpetas"
           >
             <FolderTree className="w-5 h-5 text-claude-accent" />
           </button>
 
           {/* Official Neural Reel Icon */}
-          <div className="w-9 h-9 rounded-xl bg-claude-surface border border-claude-border flex items-center justify-center shadow-sm overflow-hidden p-1">
+          <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-claude-surface border border-claude-border flex items-center justify-center shadow-sm overflow-hidden p-1 flex-shrink-0">
             <img src="/icons/icon.svg" alt="ReelMind" className="w-full h-full object-contain" />
           </div>
 
-          <div>
-            <div className="flex items-center gap-2">
-              <span className="text-2xl font-serif font-semibold tracking-tight text-claude-text">
-                ReelMind
-              </span>
-              <span className="text-[10px] font-mono uppercase tracking-wider px-2 py-0.5 rounded-full bg-claude-accentSubtle text-claude-accent border border-claude-accentBorder">
-                Vault
-              </span>
-            </div>
+          <div className="flex items-center gap-1.5 sm:gap-2 min-w-0">
+            <span className="text-lg sm:text-xl md:text-2xl font-serif font-bold tracking-tight text-claude-text truncate">
+              ReelMind
+            </span>
+            <span className="hidden sm:inline-flex text-[10px] font-mono uppercase tracking-wider px-2 py-0.5 rounded-full bg-claude-accentSubtle text-claude-accent border border-claude-accentBorder flex-shrink-0">
+              Vault
+            </span>
           </div>
         </div>
 
         {/* Actions */}
-        <div className="flex items-center gap-2 sm:gap-3">
+        <div className="flex items-center gap-1 sm:gap-2 flex-shrink-0">
           
           {/* Indicador estado Gemini */}
           <button
@@ -76,38 +74,39 @@ export const Navbar: React.FC<NavbarProps> = ({
           {onOpenAskVault && (
             <button
               onClick={onOpenAskVault}
-              className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium bg-claude-surface hover:bg-claude-elevated text-claude-accent border border-claude-accentBorder transition-all active:scale-95 shadow-sm"
+              className="flex items-center gap-1.5 p-2 sm:px-3 sm:py-2 rounded-xl text-xs font-medium bg-claude-surface hover:bg-claude-elevated text-claude-accent border border-claude-accentBorder transition-all active:scale-95 shadow-sm"
               title="Preguntar a la Bóveda con IA Gemini"
             >
-              <Sparkles className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Preguntar IA</span>
+              <Sparkles className="w-4 h-4 sm:w-3.5 sm:h-3.5" />
+              <span className="hidden md:inline">Preguntar IA</span>
             </button>
           )}
 
           {/* Pegar rápido de portapapeles */}
           <button
             onClick={onPasteFromClipboard}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium bg-claude-surface hover:bg-[#2a2925] text-claude-text border border-claude-border transition-all active:scale-95"
+            className="flex items-center gap-1.5 p-2 sm:px-3 sm:py-2 rounded-xl text-xs font-medium bg-claude-surface hover:bg-[#2a2925] text-claude-text border border-claude-border transition-all active:scale-95"
             title="Pegar enlace del portapapeles"
           >
-            <ClipboardPaste className="w-3.5 h-3.5 text-claude-accent" />
-            <span className="hidden sm:inline">Pegar enlace</span>
+            <ClipboardPaste className="w-4 h-4 sm:w-3.5 sm:h-3.5 text-claude-accent" />
+            <span className="hidden md:inline">Pegar enlace</span>
           </button>
 
           {/* Botón Añadir Reel en tono Terracota de Claude */}
           <button
             onClick={onOpenAddModal}
-            className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold bg-claude-accent hover:bg-claude-accentHover text-white shadow-sm transition-all active:scale-95"
+            className="flex items-center gap-1.5 p-2 sm:px-3.5 sm:py-2 rounded-xl text-xs sm:text-sm font-semibold bg-claude-accent hover:bg-claude-accentHover text-white shadow-sm transition-all active:scale-95"
+            title="Guardar nuevo reel o vídeo"
           >
             <Plus className="w-4 h-4" />
-            <span>Guardar</span>
+            <span className="hidden sm:inline">Guardar</span>
           </button>
 
           {/* Botón Ajustes */}
           <button
             onClick={onOpenSettingsModal}
             className="p-2 rounded-xl text-claude-textMuted hover:text-claude-text hover:bg-claude-surface transition-all"
-            title="Ajustes y API Key"
+            title="Ajustes y Temas"
           >
             <Settings className="w-4 h-4" />
           </button>

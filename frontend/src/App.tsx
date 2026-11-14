@@ -341,22 +341,23 @@ export const App: React.FC = () => {
         />
 
         {/* Área Principal de Contenido */}
-        <main className="flex-1 min-w-0 px-4 sm:px-6 lg:px-8 py-6">
+        <main className="flex-1 min-w-0 px-3 sm:px-6 lg:px-8 py-4 sm:py-6">
           
           {/* Selector de Apartados: Reels (<10m) vs Vídeos (>10m) vs Prompts */}
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6 pb-4 border-b border-claude-border">
-            <div className="flex items-center gap-1.5 p-1 rounded-2xl bg-claude-surface border border-claude-border shadow-sm overflow-x-auto scrollbar-none">
+            <div className="flex items-center gap-1 sm:gap-1.5 p-1 rounded-2xl bg-claude-surface border border-claude-border shadow-sm overflow-x-auto scrollbar-none w-full sm:w-auto">
               <button
                 onClick={() => setActiveSection('reels')}
-                className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs sm:text-sm font-semibold transition-all whitespace-nowrap ${
+                className={`flex-1 sm:flex-initial flex items-center justify-center gap-1.5 sm:gap-2 px-2.5 sm:px-3.5 py-2 rounded-xl text-xs sm:text-sm font-semibold transition-all whitespace-nowrap ${
                   activeSection === 'reels'
                     ? 'bg-claude-accent text-white shadow-sm'
                     : 'text-claude-textMuted hover:text-claude-text hover:bg-claude-bg/50'
                 }`}
               >
-                <Smartphone className="w-4 h-4" />
-                <span>Reels (&lt; 10 min)</span>
-                <span className={`text-[11px] font-mono px-2 py-0.5 rounded-full ${
+                <Smartphone className="w-3.5 h-3.5 sm:w-4 sm:h-4 flex-shrink-0" />
+                <span className="sm:hidden">Reels</span>
+                <span className="hidden sm:inline">Reels (&lt; 10 min)</span>
+                <span className={`text-[10px] sm:text-[11px] font-mono px-1.5 sm:px-2 py-0.5 rounded-full ${
                   activeSection === 'reels' ? 'bg-black/25 text-white' : 'bg-claude-bg text-claude-textMuted'
                 }`}>
                   {stats?.reels_count ?? 0}
@@ -365,15 +366,16 @@ export const App: React.FC = () => {
 
               <button
                 onClick={() => setActiveSection('videos')}
-                className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs sm:text-sm font-semibold transition-all whitespace-nowrap ${
+                className={`flex-1 sm:flex-initial flex items-center justify-center gap-1.5 sm:gap-2 px-2.5 sm:px-3.5 py-2 rounded-xl text-xs sm:text-sm font-semibold transition-all whitespace-nowrap ${
                   activeSection === 'videos'
                     ? 'bg-claude-accent text-white shadow-sm'
                     : 'text-claude-textMuted hover:text-claude-text hover:bg-claude-bg/50'
                 }`}
               >
-                <Film className="w-4 h-4" />
-                <span>Vídeos (&gt; 10 min)</span>
-                <span className={`text-[11px] font-mono px-2 py-0.5 rounded-full ${
+                <Film className="w-3.5 h-3.5 sm:w-4 sm:h-4 flex-shrink-0" />
+                <span className="sm:hidden">Vídeos</span>
+                <span className="hidden sm:inline">Vídeos (&gt; 10 min)</span>
+                <span className={`text-[10px] sm:text-[11px] font-mono px-1.5 sm:px-2 py-0.5 rounded-full ${
                   activeSection === 'videos' ? 'bg-black/25 text-white' : 'bg-claude-bg text-claude-textMuted'
                 }`}>
                   {stats?.videos_count ?? 0}
@@ -382,15 +384,16 @@ export const App: React.FC = () => {
 
               <button
                 onClick={() => setActiveSection('prompts')}
-                className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs sm:text-sm font-semibold transition-all whitespace-nowrap ${
+                className={`flex-1 sm:flex-initial flex items-center justify-center gap-1.5 sm:gap-2 px-2.5 sm:px-3.5 py-2 rounded-xl text-xs sm:text-sm font-semibold transition-all whitespace-nowrap ${
                   activeSection === 'prompts'
                     ? 'bg-claude-accent text-white shadow-sm'
                     : 'text-claude-textMuted hover:text-claude-text hover:bg-claude-bg/50'
                 }`}
               >
-                <Terminal className="w-4 h-4" />
-                <span>Bóveda Prompts</span>
-                <span className={`text-[11px] font-mono px-2 py-0.5 rounded-full ${
+                <Terminal className="w-3.5 h-3.5 sm:w-4 sm:h-4 flex-shrink-0" />
+                <span className="sm:hidden">Prompts</span>
+                <span className="hidden sm:inline">Bóveda Prompts</span>
+                <span className={`text-[10px] sm:text-[11px] font-mono px-1.5 sm:px-2 py-0.5 rounded-full ${
                   activeSection === 'prompts' ? 'bg-black/25 text-white' : 'bg-claude-bg text-claude-textMuted'
                 }`}>
                   ⚡
@@ -401,17 +404,17 @@ export const App: React.FC = () => {
             <div className="flex items-center gap-2 text-xs text-claude-textMuted font-sans">
               {activeSection === 'prompts' ? (
                 <span className="flex items-center gap-1.5 text-claude-accent font-medium">
-                  <Terminal className="w-3.5 h-3.5" />
+                  <Terminal className="w-3.5 h-3.5 flex-shrink-0" />
                   <span>Cheatsheet de prompts con optimizador y adaptador de modelos IA</span>
                 </span>
               ) : activeSection === 'reels' ? (
                 <span className="flex items-center gap-1.5 text-claude-textMuted">
-                  <Sparkles className="w-3.5 h-3.5 text-claude-accent" />
-                  <span>Vídeo analizado por IA (visión de fotogramas, prompts en pantalla y audio)</span>
+                  <Sparkles className="w-3.5 h-3.5 text-claude-accent flex-shrink-0" />
+                  <span>Vídeo analizado por IA (visión de fotogramas, prompts y audio)</span>
                 </span>
               ) : (
                 <span className="flex items-center gap-1.5 text-claude-textMuted">
-                  <ExternalLink className="w-3.5 h-3.5 text-blue-400" />
+                  <ExternalLink className="w-3.5 h-3.5 text-blue-400 flex-shrink-0" />
                   <span>Enlace directo · Sin descargas en disco</span>
                 </span>
               )}
