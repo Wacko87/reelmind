@@ -1,6 +1,7 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Reel } from '../types';
 import { safeExternalUrl } from '../utils/security';
+import { SmartThumbnailCover } from './SmartThumbnailCover';
 import { 
   ExternalLink, 
   Star, 
@@ -10,7 +11,8 @@ import {
   Sparkles,
   Play,
   Film,
-  Folder as FolderIcon
+  Folder as FolderIcon,
+  Image as ImageIcon
 } from 'lucide-react';
 
 interface ReelCardProps {
@@ -28,6 +30,7 @@ export const ReelCard: React.FC<ReelCardProps> = React.memo(({
   onToggleStatus,
   onSelectTool,
 }) => {
+  const [useOriginalPhoto, setUseOriginalPhoto] = useState(false);
   const isFavorite = reel.status === 'favorite';
   const isTested = reel.status === 'tested';
   const isLongVideo = reel.media_type === 'video' || (reel.duration && reel.duration > 600);
@@ -64,80 +67,98 @@ export const ReelCard: React.FC<ReelCardProps> = React.memo(({
   return (
     <div className="group relative flex flex-col rounded-2xl claude-card overflow-hidden transition-all duration-300">
       
-      {/* Thumbnail area */}
+      {/* Thumbnail / Smart AI Cover Area */}
       <div 
         onClick={() => onOpenDetail(reel)}
-        className="relative h-44 w-full bg-claude-surface cursor-pointer overflow-hidden"
+        className="relative h-48 w-full bg-claude-surface cursor-pointer overflow-hidden border-b border-claude-borderSubtle"
       >
-        {reel.thumbnail_url ? (
-          <img
-            src={reel.thumbnail_url}
-            alt={reel.title}
-            className="w-full h-full object-cover group-hover:scale-[1.03] transition-transform duration-500"
-            loading="lazy"
-            decoding="async"
-            onError={(e) => {
-              (e.target as HTMLElement).style.display = 'none';
-            }}
-          />
-        ) : (
-          <div className="w-full h-full flex flex-col items-center justify-center bg-claude-surface p-4 text-center">
-            <Film className="w-8 h-8 text-claude-textMuted/40 mb-2" />
-            <span className="text-xs text-claude-textMuted font-mono">Sin miniatura</span>
+        {useOriginalPhoto && reel.thumbnail_url ? (
+          <div className="relative w-full h-full">
+            <img
+              src={reel.thumbnail_url}
+              alt={reel.title}
+              className="w-full h-full object-cover group-hover:scale-[1.03] transition-transform duration-500"
+              loading="lazy"
+              decoding="async"
+              onError={() => setUseOriginalPhoto(false)}
+            />
+            {/* Gradient Overlay */}
+            <div className="absolute inset-0 bg-gradient-to-t from-theme-bg via-theme-bg/30 to-transparent" />
           </div>
+        ) : (
+          <SmartThumbnailCover 
+            reel={reel} 
+            className="group-hover:scale-[1.02] transition-transform duration-500" 
+          />
         )}
 
-        {/* Gradient Overlay */}
-        <div className="absolute inset-0 bg-gradient-to-t from-theme-bg via-theme-bg/30 to-transparent" />
-
-        {/* Badges superiores estilo Claude */}
-        <div className="absolute top-3 left-3 flex items-center gap-1.5 z-10 flex-wrap max-w-[75%]">
+        {/* Badges superiores */}
+        <div className="absolute top-2.5 left-2.5 flex items-center gap-1.5 z-10 flex-wrap max-w-[70%]">
           {isLongVideo ? (
-            <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-300 border border-blue-500/30 shadow-sm backdrop-blur-md flex items-center gap-1">
+            <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-blue-500/30 text-blue-200 border border-blue-400/30 shadow-sm backdrop-blur-md flex items-center gap-1">
               <Film className="w-2.5 h-2.5" />
               <span>Vídeo {formattedDuration ? `· ${formattedDuration}` : ''}</span>
             </span>
           ) : (
-            <span className="text-[10px] font-mono uppercase tracking-wider px-2 py-0.5 rounded-full bg-theme-bg/90 text-claude-text border border-claude-border shadow-sm backdrop-blur-md">
+            <span className="text-[10px] font-mono uppercase tracking-wider px-2 py-0.5 rounded-full bg-black/60 text-white/90 border border-white/15 shadow-sm backdrop-blur-md">
               {platformBadge.label}
             </span>
           )}
           {reel.folder_name && (
-            <span className="text-[10px] font-sans px-2 py-0.5 rounded-full bg-theme-bg/90 text-claude-accent border border-claude-border backdrop-blur-md flex items-center gap-1">
+            <span className="text-[10px] font-sans px-2 py-0.5 rounded-full bg-black/60 text-claude-accent border border-white/15 backdrop-blur-md flex items-center gap-1">
               <FolderIcon className="w-2.5 h-2.5" />
               <span className="truncate max-w-[85px]">{reel.folder_name}</span>
             </span>
           )}
         </div>
 
-        {/* Botón rápido de Favorito */}
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            onToggleFavorite(reel);
-          }}
-          className={`absolute top-3 right-3 min-w-[36px] min-h-[36px] flex items-center justify-center rounded-xl backdrop-blur-md transition-all z-10 ${
-            isFavorite
-              ? 'bg-claude-accent text-white shadow-sm'
-              : 'bg-theme-bg/80 text-claude-textMuted hover:text-claude-text border border-claude-border'
-          }`}
-          title={isFavorite ? 'Quitar de favoritos' : 'Añadir a favoritos'}
-        >
-          <Star className={`w-3.5 h-3.5 ${isFavorite ? 'fill-white' : ''}`} />
-        </button>
+        {/* Botones de acción en la esquina superior derecha */}
+        <div className="absolute top-2.5 right-2.5 flex items-center gap-1.5 z-10">
+          {/* Botón para alternar portada inteligente / foto original del vídeo (si hay thumbnail) */}
+          {reel.thumbnail_url && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setUseOriginalPhoto(prev => !prev);
+              }}
+              className="w-7 h-7 flex items-center justify-center rounded-lg bg-black/60 hover:bg-black/80 text-white/80 hover:text-white border border-white/15 backdrop-blur-md transition-all touch-manipulation shadow-sm cursor-pointer"
+              title={useOriginalPhoto ? 'Ver portada resumen con IA' : 'Ver miniatura original del vídeo'}
+            >
+              {useOriginalPhoto ? <Sparkles className="w-3.5 h-3.5 text-claude-accent" /> : <ImageIcon className="w-3.5 h-3.5" />}
+            </button>
+          )}
+
+          {/* Botón rápido de Favorito */}
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggleFavorite(reel);
+            }}
+            className={`w-7 h-7 flex items-center justify-center rounded-lg backdrop-blur-md transition-all touch-manipulation cursor-pointer ${
+              isFavorite
+                ? 'bg-claude-accent text-white shadow-sm'
+                : 'bg-black/60 text-white/80 hover:text-white border border-white/15'
+            }`}
+            title={isFavorite ? 'Quitar de favoritos' : 'Añadir a favoritos'}
+          >
+            <Star className={`w-3.5 h-3.5 ${isFavorite ? 'fill-white' : ''}`} />
+          </button>
+        </div>
 
         {/* Play Icon en Hover */}
-        <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-          <div className="w-11 h-11 rounded-full bg-claude-accent text-white flex items-center justify-center shadow-lg backdrop-blur-sm transform scale-90 group-hover:scale-100 transition-transform">
+        <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
+          <div className="w-10 h-10 rounded-full bg-claude-accent text-white flex items-center justify-center shadow-lg backdrop-blur-sm transform scale-90 group-hover:scale-100 transition-transform">
             <Play className="w-4 h-4 ml-0.5 fill-white" />
           </div>
         </div>
 
-        {/* Creador / Autor si existe */}
-        {reel.author && (
-          <div className="absolute bottom-2.5 left-3 text-[11px] text-claude-textMuted flex items-center gap-1 z-10 font-sans">
+        {/* Creador / Autor si existe (solo en modo foto) */}
+        {useOriginalPhoto && reel.author && (
+          <div className="absolute bottom-2.5 left-3 text-[11px] text-white/90 flex items-center gap-1 z-10 font-sans drop-shadow-md">
             <span>de</span>
-            <span className="text-claude-text font-medium">{reel.author}</span>
+            <span className="text-white font-medium">{reel.author}</span>
           </div>
         )}
       </div>
