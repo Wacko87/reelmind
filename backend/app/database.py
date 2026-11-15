@@ -67,6 +67,7 @@ async def init_db():
                 user_notes TEXT DEFAULT '',
                 folder_id TEXT,
                 media_type TEXT DEFAULT 'reel',
+                images TEXT NOT NULL DEFAULT '[]',
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 FOREIGN KEY (folder_id) REFERENCES folders(id) ON DELETE SET NULL
@@ -84,6 +85,8 @@ async def init_db():
             await db.execute("UPDATE reels SET media_type = 'video' WHERE duration > 600;")
         if "estimated_time" not in columns:
             await db.execute("ALTER TABLE reels ADD COLUMN estimated_time TEXT DEFAULT '15-30 min';")
+        if "images" not in columns:
+            await db.execute("ALTER TABLE reels ADD COLUMN images TEXT DEFAULT '[]';")
 
         # Normalizar URLs con www a dominio canónico para asegurar detección infalible de duplicados
         await db.execute("UPDATE reels SET url = REPLACE(url, '://www.', '://') WHERE url LIKE '%://www.%';")

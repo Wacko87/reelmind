@@ -25,7 +25,9 @@ import {
   Wand2,
   Loader2,
   ZoomIn,
-  Image as ImageIcon
+  Image as ImageIcon,
+  ChevronLeft,
+  ChevronRight
 } from 'lucide-react';
 
 interface ReelDetailModalProps {
@@ -51,6 +53,14 @@ export const ReelDetailModal: React.FC<ReelDetailModalProps> = ({
   const [isDeleting, setIsDeleting] = useState(false);
   const [isExportingMd, setIsExportingMd] = useState(false);
   const [isLightboxOpen, setIsLightboxOpen] = useState(false);
+  const [activeSlide, setActiveSlide] = useState(0);
+
+  const images = (reel.images && reel.images.length > 0) ? reel.images : (reel.thumbnail_url ? [reel.thumbnail_url] : []);
+  const currentImage = images[activeSlide] || reel.thumbnail_url || reel.url;
+
+  useEffect(() => {
+    setActiveSlide(0);
+  }, [reel.id]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -60,11 +70,15 @@ export const ReelDetailModal: React.FC<ReelDetailModalProps> = ({
         } else {
           onClose();
         }
+      } else if (e.key === 'ArrowLeft' && images.length > 1) {
+        setActiveSlide(prev => (prev === 0 ? images.length - 1 : prev - 1));
+      } else if (e.key === 'ArrowRight' && images.length > 1) {
+        setActiveSlide(prev => (prev === images.length - 1 ? 0 : prev + 1));
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [onClose, isLightboxOpen]);
+  }, [onClose, isLightboxOpen, images.length]);
 
   // Estados de optimización de prompts
   const [activeOptimizerIndex, setActiveOptimizerIndex] = useState<number | null>(null);
@@ -323,20 +337,54 @@ export const ReelDetailModal: React.FC<ReelDetailModalProps> = ({
         {/* Scrollable Modal Body */}
         <div className="p-4 sm:p-6 space-y-6 overflow-y-auto">
           
-          {/* Si es infografía / imagen: visor interactivo con zoom lightbox */}
+          {/* Si es infografía / carrusel de imágenes: visor interactivo con zoom lightbox */}
           {reel.media_type === 'image' && (
             <div className="space-y-3">
               <div className="relative rounded-2xl overflow-hidden border border-claude-border bg-black/60 group">
                 <img
-                  src={reel.thumbnail_url || reel.url}
+                  src={currentImage}
                   alt={reel.title}
                   className="w-full max-h-[480px] object-contain rounded-2xl cursor-zoom-in transition-all"
                   onClick={() => setIsLightboxOpen(true)}
                 />
+
+                {/* Flechas de navegación para carrusel */}
+                {images.length > 1 && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setActiveSlide(prev => (prev === 0 ? images.length - 1 : prev - 1));
+                      }}
+                      className="absolute left-3 top-1/2 -translate-y-1/2 p-2 rounded-full bg-black/70 hover:bg-black/90 text-white border border-white/20 shadow-lg backdrop-blur-md transition-all cursor-pointer opacity-90 hover:opacity-100 hover:scale-110"
+                      title="Diapositiva anterior"
+                    >
+                      <ChevronLeft className="w-5 h-5" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setActiveSlide(prev => (prev === images.length - 1 ? 0 : prev + 1));
+                      }}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 p-2 rounded-full bg-black/70 hover:bg-black/90 text-white border border-white/20 shadow-lg backdrop-blur-md transition-all cursor-pointer opacity-90 hover:opacity-100 hover:scale-110"
+                      title="Siguiente diapositiva"
+                    >
+                      <ChevronRight className="w-5 h-5" />
+                    </button>
+
+                    {/* Contador de diapositivas en la parte superior */}
+                    <div className="absolute top-3 left-3 px-2.5 py-1 rounded-full bg-black/70 text-white text-xs font-mono font-medium border border-white/20 backdrop-blur-md shadow">
+                      {activeSlide + 1} / {images.length}
+                    </div>
+                  </>
+                )}
+
                 <div className="absolute bottom-3 right-3 flex items-center gap-2">
                   <button
                     onClick={() => setIsLightboxOpen(true)}
-                    className="px-3 py-1.5 rounded-xl bg-black/75 hover:bg-black text-white text-xs font-medium border border-white/20 backdrop-blur-md flex items-center gap-1.5 shadow-lg transition-all"
+                    className="px-3 py-1.5 rounded-xl bg-black/75 hover:bg-black text-white text-xs font-medium border border-white/20 backdrop-blur-md flex items-center gap-1.5 shadow-lg transition-all cursor-pointer"
                   >
                     <ZoomIn className="w-3.5 h-3.5" />
                     <span>Ver en grande</span>
@@ -354,6 +402,29 @@ export const ReelDetailModal: React.FC<ReelDetailModalProps> = ({
                   )}
                 </div>
               </div>
+
+              {/* Tira horizontal de miniaturas para saltar directamente a cualquier diapositiva */}
+              {images.length > 1 && (
+                <div className="flex items-center gap-2 overflow-x-auto pb-1 pt-1">
+                  {images.map((imgUrl, idx) => (
+                    <button
+                      key={idx}
+                      type="button"
+                      onClick={() => setActiveSlide(idx)}
+                      className={`relative flex-shrink-0 w-16 h-16 rounded-xl overflow-hidden border-2 transition-all cursor-pointer ${
+                        activeSlide === idx 
+                          ? 'border-claude-accent ring-2 ring-claude-accent/30 scale-105' 
+                          : 'border-claude-border opacity-70 hover:opacity-100 hover:border-claude-textMuted'
+                      }`}
+                    >
+                      <img src={imgUrl} alt={`Diapositiva ${idx + 1}`} className="w-full h-full object-cover" />
+                      <span className="absolute bottom-0 right-0 px-1 text-[9px] font-bold bg-black/80 text-white rounded-tl">
+                        {idx + 1}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
           )}
 
@@ -742,13 +813,44 @@ export const ReelDetailModal: React.FC<ReelDetailModalProps> = ({
         >
           <button
             onClick={() => setIsLightboxOpen(false)}
-            className="absolute top-4 right-4 z-50 p-2.5 rounded-2xl bg-white/10 hover:bg-white/20 text-white transition-all"
+            className="absolute top-4 right-4 z-50 p-2.5 rounded-2xl bg-white/10 hover:bg-white/20 text-white transition-all cursor-pointer"
             title="Cerrar visor"
           >
             <X className="w-6 h-6" />
           </button>
+
+          {images.length > 1 && (
+            <>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setActiveSlide(prev => (prev === 0 ? images.length - 1 : prev - 1));
+                }}
+                className="absolute left-4 top-1/2 -translate-y-1/2 z-50 p-3 rounded-full bg-white/10 hover:bg-white/25 text-white transition-all cursor-pointer shadow-lg backdrop-blur-md"
+                title="Diapositiva anterior"
+              >
+                <ChevronLeft className="w-8 h-8" />
+              </button>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setActiveSlide(prev => (prev === images.length - 1 ? 0 : prev + 1));
+                }}
+                className="absolute right-4 top-1/2 -translate-y-1/2 z-50 p-3 rounded-full bg-white/10 hover:bg-white/25 text-white transition-all cursor-pointer shadow-lg backdrop-blur-md"
+                title="Siguiente diapositiva"
+              >
+                <ChevronRight className="w-8 h-8" />
+              </button>
+              <div className="absolute top-4 left-4 z-50 px-3 py-1.5 rounded-full bg-white/10 text-white font-mono text-sm border border-white/20 backdrop-blur-md shadow">
+                {activeSlide + 1} / {images.length}
+              </div>
+            </>
+          )}
+
           <img
-            src={reel.thumbnail_url || reel.url}
+            src={currentImage}
             alt={reel.title}
             className="max-w-full max-h-full object-contain rounded-xl shadow-2xl"
             onClick={(e) => e.stopPropagation()}

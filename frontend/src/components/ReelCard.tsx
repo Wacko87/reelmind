@@ -106,7 +106,7 @@ export const ReelCard: React.FC<ReelCardProps> = React.memo(({
           {isImage ? (
             <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-500/30 text-emerald-200 border border-emerald-400/30 shadow-sm backdrop-blur-md flex items-center gap-1">
               <ImageIcon className="w-2.5 h-2.5" />
-              <span>Infografía</span>
+              <span>{reel.images && reel.images.length > 1 ? `Carrusel (${reel.images.length})` : 'Infografía'}</span>
             </span>
           ) : isLongVideo ? (
             <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-blue-500/30 text-blue-200 border border-blue-400/30 shadow-sm backdrop-blur-md flex items-center gap-1">
@@ -173,6 +173,14 @@ export const ReelCard: React.FC<ReelCardProps> = React.memo(({
           <div className="absolute bottom-2.5 left-3 text-[11px] text-white/90 flex items-center gap-1 z-10 font-sans drop-shadow-md">
             <span>de</span>
             <span className="text-white font-medium">{reel.author}</span>
+          </div>
+        )}
+
+        {/* Badge de contador de fotos si es carrusel */}
+        {reel.images && reel.images.length > 1 && (
+          <div className="absolute bottom-2.5 right-2.5 z-10 px-2 py-0.5 rounded-md bg-black/75 text-white/95 text-[10px] font-medium border border-white/20 backdrop-blur-md flex items-center gap-1 shadow">
+            <ImageIcon className="w-3 h-3 text-emerald-400" />
+            <span>{reel.images.length} fotos</span>
           </div>
         )}
       </div>

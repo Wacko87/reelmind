@@ -160,6 +160,7 @@ def format_reel_row(row: aiosqlite.Row) -> dict:
         "folder_id": row_dict.get("folder_id"),
         "folder_name": row_dict.get("folder_name"),
         "media_type": row_dict.get("media_type") or "reel",
+        "images": safe_json_loads(row_dict.get("images")),
         "is_duplicate": False,
         "created_at": row_dict["created_at"],
         "updated_at": row_dict["updated_at"],
@@ -246,7 +247,12 @@ tags:
     else:
         md += "_No se incluyeron prompts textuales._\n\n"
 
-    if reel.get("media_type") == "image" or reel.get("thumbnail_url"):
+    images_list = reel.get("images") or []
+    if images_list and len(images_list) > 1:
+        md += "## 🖼️ Carrusel de Diapositivas / Infografías\n"
+        for idx, img_p in enumerate(images_list, 1):
+            md += f"### Diapositiva {idx}\n![Diapositiva {idx}]({img_p})\n\n"
+    elif reel.get("media_type") == "image" or reel.get("thumbnail_url"):
         img_target = reel.get('thumbnail_url') or reel.get('url')
         if img_target:
             md += f"## 🖼️ Ficha Visual / Infografía\n![{clean_title}]({img_target})\n\n"
@@ -561,16 +567,24 @@ async def analyze_reel(request: ReelAnalyzeRequest):
                     api_key=api_key,
                     model_name=settings.GEMINI_MODEL
                 )
-                if extraction.media_path and os.path.exists(extraction.media_path):
-                    images_dir = os.path.join(settings.DATA_DIR, "images")
-                    os.makedirs(images_dir, exist_ok=True)
-                    img_ext = os.path.splitext(extraction.media_path)[1].lower() or ".jpg"
-                    dest_img_path = os.path.join(images_dir, f"{reel_id}{img_ext}")
-                    try:
-                        shutil.copy2(extraction.media_path, dest_img_path)
-                        stored_thumb = f"/api/images/{reel_id}{img_ext}"
-                    except Exception as copy_err:
-                        print(f"Aviso al persistir imagen: {copy_err}")
+                images_dir = os.path.join(settings.DATA_DIR, "images")
+                os.makedirs(images_dir, exist_ok=True)
+
+                paths = getattr(extraction, "media_paths", None) or ([extraction.media_path] if extraction.media_path else [])
+                stored_images = []
+                for idx, p in enumerate(paths):
+                    if p and os.path.exists(p):
+                        img_ext = os.path.splitext(p)[1].lower() or ".jpg"
+                        dest_name = f"{reel_id}_{idx}{img_ext}" if len(paths) > 1 else f"{reel_id}{img_ext}"
+                        dest_path = os.path.join(images_dir, dest_name)
+                        try:
+                            shutil.copy2(p, dest_path)
+                            stored_images.append(f"/api/images/{dest_name}")
+                        except Exception as copy_err:
+                            print(f"Aviso al persistir imagen {idx}: {copy_err}")
+
+                if stored_images:
+                    stored_thumb = stored_images[0]
             else:
                 # Análisis multimodal con audio para reels cortos (<10 min)
                 analysis: GeminiAnalysisResult = await analyze_reel_with_gemini(
@@ -578,6 +592,7 @@ async def analyze_reel(request: ReelAnalyzeRequest):
                     api_key=api_key,
                     model_name=settings.GEMINI_MODEL
                 )
+                stored_images = []
         except Exception as e:
             extraction.cleanup()
             raise HTTPException(status_code=500, detail=f"Error al analizar con Gemini: {str(e)}")
@@ -599,8 +614,9 @@ async def analyze_reel(request: ReelAnalyzeRequest):
             INSERT INTO reels (
                 id, url, platform, author, author_url, original_title, thumbnail_url,
                 duration, title, summary, ai_tools, key_steps, prompts, tags,
-                difficulty, estimated_time, status, user_notes, folder_id, media_type, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                difficulty, estimated_time, status, user_notes, folder_id, media_type,
+                images, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 reel_id,
@@ -623,6 +639,7 @@ async def analyze_reel(request: ReelAnalyzeRequest):
                 "",
                 folder_id,
                 extraction.media_type,
+                json.dumps(stored_images, ensure_ascii=False),
                 now,
                 now,
             )

@@ -196,8 +196,8 @@ async def analyze_image_with_gemini(
     model_name: str = "gemini-3.1-flash-lite"
 ) -> GeminiAnalysisResult:
     """
-    Análisis multimodal con OCR de alta precisión para infografías, fichas de prompts (cheatsheets)
-    y capturas de pantalla de herramientas de IA.
+    Análisis multimodal con OCR de alta precisión para infografías, fichas de prompts (cheatsheets),
+    carruseles de imágenes y capturas de pantalla de herramientas de IA.
     Utiliza types.Part.from_bytes para procesamiento directo en memoria sin demoras.
     """
     if not api_key:
@@ -205,30 +205,40 @@ async def analyze_image_with_gemini(
 
     client = get_gemini_client(api_key)
 
-    image_path = extraction.media_path
-    if not image_path or not os.path.exists(image_path):
-        raise ValueError("No se encontró el archivo de imagen para analizar.")
+    paths = getattr(extraction, "media_paths", None) or ([extraction.media_path] if extraction.media_path else [])
+    valid_parts = []
+    for p in paths:
+        if p and os.path.exists(p):
+            with open(p, "rb") as f:
+                img_bytes = f.read()
+            ext = os.path.splitext(p)[1].lower()
+            mime = "image/png" if ext == ".png" else ("image/webp" if ext == ".webp" else "image/jpeg")
+            valid_parts.append(types.Part.from_bytes(data=img_bytes, mime_type=mime))
 
-    with open(image_path, "rb") as f:
-        image_bytes = f.read()
+    if not valid_parts:
+        raise ValueError("No se encontraron archivos de imagen válidos para analizar.")
 
-    mime_type = extraction.mime_type or "image/jpeg"
-    if not mime_type.startswith("image/"):
-        mime_type = "image/jpeg"
+    num_imgs = len(valid_parts)
+    if num_imgs > 1:
+        context_prompt = (
+            f"Analiza detalladamente esta secuencia completa de {num_imgs} diapositivas/imágenes de un carrusel de Inteligencia Artificial.\n"
+            "Aplica OCR exhaustivo a lo largo de TODAS las diapositivas para sintetizar la guía completa: "
+            "extrae todos los prompts textuales, parámetros de renderizado o comandos, herramientas o modelos de IA mencionados en el carrusel, "
+            "los pasos clave ordenados lógicamente y genera la ficha técnica estructurada en JSON según las instrucciones del sistema."
+        )
+    else:
+        context_prompt = (
+            "Analiza detalladamente esta imagen/infografía técnica de Inteligencia Artificial.\n"
+            "Aplica OCR minucioso para extraer todos los prompts textuales, parámetros de estilo y renderizado (--ar, etc.), "
+            "herramientas o modelos de IA mencionados, pasos clave y genera la ficha técnica estructurada en JSON según las instrucciones del sistema."
+        )
 
-    image_part = types.Part.from_bytes(data=image_bytes, mime_type=mime_type)
-
-    context_prompt = (
-        "Analiza detalladamente esta imagen/infografía técnica de Inteligencia Artificial.\n"
-        "Aplica OCR minucioso para extraer todos los prompts textuales, parámetros de estilo y renderizado (--ar, etc.), "
-        "herramientas o modelos de IA mencionados, pasos clave y genera la ficha técnica estructurada en JSON según las instrucciones del sistema."
-    )
-    if extraction.title and extraction.title not in ("Infografía de Inteligencia Artificial", "Infografía de IA"):
+    if extraction.title and extraction.title not in ("Infografía de Inteligencia Artificial", "Infografía de IA", "Carrusel de Instagram"):
         context_prompt += f"\nContexto o título original: {extraction.title}"
     if extraction.description:
         context_prompt += f"\nDescripción asociada: {extraction.description[:1000]}"
 
-    contents = [image_part, context_prompt]
+    contents = valid_parts + [context_prompt]
 
     response = await generate_with_fallback(
         client=client,

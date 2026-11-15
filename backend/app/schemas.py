@@ -76,6 +76,7 @@ class ReelResponse(BaseModel):
     folder_id: Optional[str] = None
     folder_name: Optional[str] = None
     media_type: str = "reel"  # 'reel' (<10 min), 'video' (>10 min) o 'image' (infografía/cheatsheet)
+    images: List[str] = Field(default_factory=list, description="Lista de imágenes si es un carrusel o infografía múltiple")
     is_duplicate: bool = False
     created_at: str
     updated_at: str

@@ -38,6 +38,7 @@ export interface Reel {
   folder_id?: string | null;
   folder_name?: string | null;
   media_type?: 'reel' | 'video' | 'image';
+  images?: string[];
   is_duplicate?: boolean;
   created_at: string;
   updated_at: string;

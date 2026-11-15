@@ -82,7 +82,7 @@ TRACKING_PARAMS = {
     'utm_content', 'si', 'feature', 'fbclid', 'gclid', '_t', '_r',
     'share_id', 'ref', 'source', 'sender_device',
     'mibextid', 'sfnsn', 'rdid', 'refid', '__cft__', '__tn__', 'paipv',
-    'exln'
+    'exln', 'img_index'
 }
 
 def resolve_facebook_url(url: str) -> str:
@@ -277,7 +277,9 @@ class VideoExtractionResult:
         audio_path: Optional[str] = None,
         media_path: Optional[str] = None,
         mime_type: Optional[str] = None,
-        media_type: str = "reel"
+        media_type: str = "reel",
+        media_paths: Optional[list] = None,
+        image_urls: Optional[list] = None
     ):
         self.platform = platform
         self.title = title
@@ -291,6 +293,8 @@ class VideoExtractionResult:
         self.audio_path = audio_path or self.media_path
         self.mime_type = mime_type or ("video/mp4" if (self.media_path and self.media_path.endswith(".mp4")) else "audio/mp3")
         self.media_type = media_type
+        self.media_paths = media_paths or ([self.media_path] if self.media_path else [])
+        self.image_urls = image_urls or ([thumbnail_url] if thumbnail_url else [])
 
     def cleanup(self):
         temp_dir = os.path.join(settings.DATA_DIR, "temp")
@@ -468,19 +472,9 @@ def extract_image_content(url: str, temp_prefix: str) -> VideoExtractionResult:
         except Exception:
             pass
 
-    # A. Detección especial de carruseles de Instagram (diapositivas / img_index)
-    selected_img = None
+    # A. Detección especial de carruseles de Instagram (diapositivas)
+    slides = []
     if "instagram.com" in url.lower():
-        parsed_ig = urlparse(url)
-        qs_ig = dict(parse_qsl(parsed_ig.query))
-        target_slide = 1
-        if "img_index" in qs_ig:
-            try:
-                target_slide = int(qs_ig["img_index"])
-            except ValueError:
-                target_slide = 1
-
-        slides = []
         seen_slides = set()
         for m in re.finditer(r'(https://[^\s\"\'\<\>]*cdninstagram\.com[^\s\"\'\<\>]*t51\.82787-15[^\s\"\'\<\>]*)', html_text):
             raw_img = m.group(1).replace('&amp;', '&')
@@ -488,27 +482,6 @@ def extract_image_content(url: str, temp_prefix: str) -> VideoExtractionResult:
             if clean_id not in seen_slides:
                 seen_slides.add(clean_id)
                 slides.append(raw_img)
-
-        if slides:
-            slide_idx = target_slide - 1 if 0 <= target_slide - 1 < len(slides) else 0
-            selected_img = slides[slide_idx]
-            print(f"📸 Diapositiva {slide_idx + 1} de {len(slides)} seleccionada del carrusel de Instagram")
-
-    # B. Si no es carrusel o no se extrajeron diapositivas, buscar OpenGraph / Twitter meta tags
-    if not selected_img:
-        og_img_match = (
-            re.search(r'property=[\"\']og:image[\"\']\s+content=[\"\']([^\"\']+)[\"\']', html_text, re.IGNORECASE) or
-            re.search(r'content=[\"\']([^\"\']+)[\"\']\s+property=[\"\']og:image[\"\']', html_text, re.IGNORECASE) or
-            re.search(r'name=[\"\']twitter:image[\"\']\s+content=[\"\']([^\"\']+)[\"\']', html_text, re.IGNORECASE) or
-            re.search(r'name=[\"\']twitter:image:src[\"\']\s+content=[\"\']([^\"\']+)[\"\']', html_text, re.IGNORECASE)
-        )
-        if og_img_match:
-            selected_img = og_img_match.group(1).replace("&amp;", "&")
-
-    if not selected_img:
-        raise ValueError("No se pudo detectar ninguna imagen o infografía en esta página.")
-
-    img_src = selected_img
 
     # Extracción y limpieza del título
     og_title_match = (
@@ -526,6 +499,52 @@ def extract_image_content(url: str, temp_prefix: str) -> VideoExtractionResult:
         re.search(r'name=[\"\']description[\"\']\s+content=[\"\']([^\"\']+)[\"\']', html_text, re.IGNORECASE)
     )
     description = html.unescape(og_desc_match.group(1)).strip() if og_desc_match else None
+
+    # Caso A: Carrusel con múltiples diapositivas detectadas
+    if len(slides) > 1:
+        print(f"📸 Detectado carrusel con {len(slides)} imágenes/diapositivas. Descargando todas...")
+        downloaded_paths = []
+        for idx, slide_url in enumerate(slides[:15]):
+            slide_out_path = f"{temp_prefix}_{idx}.jpg"
+            try:
+                with httpx.Client(follow_redirects=True, timeout=20.0, headers=browser_headers) as client:
+                    img_resp = client.get(slide_url)
+                    img_resp.raise_for_status()
+                    with open(slide_out_path, "wb") as f:
+                        f.write(img_resp.content)
+                    downloaded_paths.append(slide_out_path)
+            except Exception as dl_err:
+                print(f"⚠️ Error descargando diapositiva {idx+1}: {dl_err}")
+
+        if downloaded_paths:
+            return VideoExtractionResult(
+                platform=platform,
+                title=title,
+                author=urlparse(url).netloc,
+                author_url=url,
+                thumbnail_url=slides[0],
+                duration=0,
+                description=description,
+                temp_prefix=temp_prefix,
+                audio_path=None,
+                media_path=downloaded_paths[0],
+                media_paths=downloaded_paths,
+                image_urls=slides[:len(downloaded_paths)],
+                mime_type="image/jpeg",
+                media_type="image"
+            )
+
+    # Caso B: Imagen individual vía OpenGraph o Twitter meta tags
+    og_img_match = (
+        re.search(r'property=[\"\']og:image[\"\']\s+content=[\"\']([^\"\']+)[\"\']', html_text, re.IGNORECASE) or
+        re.search(r'content=[\"\']([^\"\']+)[\"\']\s+property=[\"\']og:image[\"\']', html_text, re.IGNORECASE) or
+        re.search(r'name=[\"\']twitter:image[\"\']\s+content=[\"\']([^\"\']+)[\"\']', html_text, re.IGNORECASE) or
+        re.search(r'name=[\"\']twitter:image:src[\"\']\s+content=[\"\']([^\"\']+)[\"\']', html_text, re.IGNORECASE)
+    )
+    if not og_img_match and not slides:
+        raise ValueError("No se pudo detectar ninguna imagen o infografía en esta página.")
+
+    img_src = slides[0] if slides else og_img_match.group(1).replace("&amp;", "&")
 
     # Descargar la imagen de la metaetiqueta o CDN
     try:
@@ -561,6 +580,8 @@ def extract_image_content(url: str, temp_prefix: str) -> VideoExtractionResult:
         temp_prefix=temp_prefix,
         audio_path=None,
         media_path=out_path,
+        media_paths=[out_path],
+        image_urls=[img_src],
         mime_type=mime,
         media_type="image"
     )
