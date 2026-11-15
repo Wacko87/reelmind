@@ -8,6 +8,7 @@ import urllib.request
 from typing import Dict, Any, Optional
 from urllib.parse import urlparse, urlunparse, parse_qsl, urlencode
 import httpx
+import json
 import yt_dlp
 from .config import settings
 
@@ -472,16 +473,72 @@ def extract_image_content(url: str, temp_prefix: str) -> VideoExtractionResult:
         except Exception:
             pass
 
-    # A. Detección especial de carruseles de Instagram (diapositivas)
+    # A. Detección precisa de carruseles de Instagram (diapositivas reales y completas sin recortar)
     slides = []
     if "instagram.com" in url.lower():
-        seen_slides = set()
-        for m in re.finditer(r'(https://[^\s\"\'\<\>]*cdninstagram\.com[^\s\"\'\<\>]*t51\.82787-15[^\s\"\'\<\>]*)', html_text):
-            raw_img = m.group(1).replace('&amp;', '&')
-            clean_id = raw_img.split('?')[0]
-            if clean_id not in seen_slides:
-                seen_slides.add(clean_id)
-                slides.append(raw_img)
+        c_match = re.search(r'\"carousel_media\":\s*\[', html_text)
+        if c_match:
+            start_idx = c_match.end() - 1
+            depth = 0
+            end_idx = start_idx
+            for i in range(start_idx, len(html_text)):
+                if html_text[i] == '[':
+                    depth += 1
+                elif html_text[i] == ']':
+                    depth -= 1
+                    if depth == 0:
+                        end_idx = i + 1
+                        break
+            try:
+                slides_data = json.loads(html_text[start_idx:end_idx])
+                for item in slides_data:
+                    candidates = item.get('image_versions2', {}).get('candidates', [])
+                    # Seleccionar el candidato original completo (sin recortar en cuadrado con 'c')
+                    uncropped = []
+                    for c in candidates:
+                        u = c.get('url', '')
+                        qs = dict(parse_qsl(urlparse(u).query))
+                        stp = qs.get('stp', '')
+                        if not stp.startswith('c'):
+                            uncropped.append(c)
+                    best = uncropped[0] if uncropped else (candidates[0] if candidates else None)
+                    if best and best.get('url'):
+                        slides.append(best.get('url'))
+                    elif item.get('display_uri'):
+                        slides.append(item.get('display_uri'))
+            except Exception as json_err:
+                print(f"⚠️ Error al interpretar JSON de carrusel de Instagram: {json_err}")
+
+        # Si no es carrusel, buscar la imagen principal no recortada
+        if not slides:
+            iv_match = re.search(r'\"image_versions2\":\s*\{', html_text)
+            if iv_match:
+                start_idx = iv_match.end() - 1
+                depth = 0
+                end_idx = start_idx
+                for i in range(start_idx, len(html_text)):
+                    if html_text[i] == '{':
+                        depth += 1
+                    elif html_text[i] == '}':
+                        depth -= 1
+                        if depth == 0:
+                            end_idx = i + 1
+                            break
+                try:
+                    iv_data = json.loads(html_text[start_idx:end_idx])
+                    candidates = iv_data.get('candidates', [])
+                    uncropped = []
+                    for c in candidates:
+                        u = c.get('url', '')
+                        qs = dict(parse_qsl(urlparse(u).query))
+                        stp = qs.get('stp', '')
+                        if not stp.startswith('c'):
+                            uncropped.append(c)
+                    best = uncropped[0] if uncropped else (candidates[0] if candidates else None)
+                    if best and best.get('url'):
+                        slides.append(best.get('url'))
+                except Exception:
+                    pass
 
     # Extracción y limpieza del título
     og_title_match = (
@@ -502,7 +559,7 @@ def extract_image_content(url: str, temp_prefix: str) -> VideoExtractionResult:
 
     # Caso A: Carrusel con múltiples diapositivas detectadas
     if len(slides) > 1:
-        print(f"📸 Detectado carrusel con {len(slides)} imágenes/diapositivas. Descargando todas...")
+        print(f"📸 Detectado carrusel con {len(slides)} imágenes/diapositivas exactas. Descargando todas sin recortar...")
         downloaded_paths = []
         for idx, slide_url in enumerate(slides[:15]):
             slide_out_path = f"{temp_prefix}_{idx}.jpg"
