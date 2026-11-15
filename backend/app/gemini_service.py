@@ -166,7 +166,7 @@ async def analyze_video_with_gemini(
             response_mime_type="application/json",
             response_schema=GeminiAnalysisResult,
             temperature=0.2,
-            max_output_tokens=1024,
+            max_output_tokens=2048,
         ),
         primary_model=model_name
     )
@@ -175,7 +175,8 @@ async def analyze_video_with_gemini(
         raise ValueError("Gemini no devolvió ninguna respuesta para el vídeo.")
 
     candidate = response.candidates[0]
-    if candidate.finish_reason not in ("STOP", None):
+    finish_reason_str = str(candidate.finish_reason) if candidate.finish_reason else ""
+    if candidate.finish_reason not in ("STOP", None) and "STOP" not in finish_reason_str and "MAX_TOKENS" not in finish_reason_str:
         raise ValueError(f"Generación interrumpida por Gemini con motivo: {candidate.finish_reason}")
 
     if response.parsed and isinstance(response.parsed, GeminiAnalysisResult):
@@ -248,7 +249,7 @@ async def analyze_image_with_gemini(
             response_mime_type="application/json",
             response_schema=GeminiAnalysisResult,
             temperature=0.2,
-            max_output_tokens=2048,
+            max_output_tokens=4096,
         ),
         primary_model=model_name
     )
@@ -257,7 +258,8 @@ async def analyze_image_with_gemini(
         raise ValueError("Gemini no devolvió ninguna respuesta para la imagen.")
 
     candidate = response.candidates[0]
-    if candidate.finish_reason not in ("STOP", None):
+    finish_reason_str = str(candidate.finish_reason) if candidate.finish_reason else ""
+    if candidate.finish_reason not in ("STOP", None) and "STOP" not in finish_reason_str and "MAX_TOKENS" not in finish_reason_str:
         raise ValueError(f"Generación interrumpida por Gemini con motivo: {candidate.finish_reason}")
 
     if response.parsed and isinstance(response.parsed, GeminiAnalysisResult):
@@ -348,7 +350,7 @@ async def analyze_reel_with_gemini(
                 response_mime_type="application/json",
                 response_schema=GeminiAnalysisResult,
                 temperature=0.2,
-                max_output_tokens=1024,
+                max_output_tokens=4096,
             ),
             primary_model=model_name
         )
@@ -357,7 +359,8 @@ async def analyze_reel_with_gemini(
             raise ValueError("Gemini no devolvió ninguna respuesta (respuesta vacía o bloqueada por filtros).")
 
         candidate = response.candidates[0]
-        if candidate.finish_reason not in ("STOP", None):
+        finish_reason_str = str(candidate.finish_reason) if candidate.finish_reason else ""
+        if candidate.finish_reason not in ("STOP", None) and "STOP" not in finish_reason_str and "MAX_TOKENS" not in finish_reason_str:
             raise ValueError(f"Generación interrumpida por Gemini con motivo: {candidate.finish_reason}")
 
         if response.parsed and isinstance(response.parsed, GeminiAnalysisResult):
