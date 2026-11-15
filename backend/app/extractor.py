@@ -2,6 +2,7 @@ import os
 import uuid
 import re
 import glob
+import html
 import ipaddress
 import urllib.request
 from typing import Dict, Any, Optional
@@ -80,7 +81,8 @@ TRACKING_PARAMS = {
     'igsh', 'utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 
     'utm_content', 'si', 'feature', 'fbclid', 'gclid', '_t', '_r',
     'share_id', 'ref', 'source', 'sender_device',
-    'mibextid', 'sfnsn', 'rdid', 'refid', '__cft__', '__tn__', 'paipv'
+    'mibextid', 'sfnsn', 'rdid', 'refid', '__cft__', '__tn__', 'paipv',
+    'exln'
 }
 
 def resolve_facebook_url(url: str) -> str:
@@ -371,21 +373,44 @@ def extract_image_content(url: str, temp_prefix: str) -> VideoExtractionResult:
         )
 
     # 3. Caso URL remota directa de imagen o página web con imagen
-    headers = {
+    browser_headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
         'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,text/html,*/*;q=0.8',
         'Accept-Language': 'es-ES,es;q=0.9,en;q=0.8',
     }
 
+    # Cabeceras de bot para redes sociales (Instagram, Twitter/X, Facebook, Threads, etc.)
+    # Las redes sociales devuelven el HTML completo con og:image a bots/crawlers, mientras que a navegadores les muestran login walls.
+    bot_headers = {
+        'User-Agent': 'facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'es-ES,es;q=0.9,en;q=0.8',
+    }
+
+    is_direct = is_direct_image_url(url)
+    initial_headers = browser_headers if is_direct else bot_headers
+
     try:
-        with httpx.Client(follow_redirects=True, timeout=20.0, headers=headers) as client:
+        with httpx.Client(follow_redirects=True, timeout=20.0, headers=initial_headers) as client:
             resp = client.get(url)
             resp.raise_for_status()
             content_type = resp.headers.get('content-type', '').lower()
             raw_data = resp.content
             final_url = str(resp.url)
     except Exception as e:
-        raise RuntimeError(f"No se pudo descargar la imagen o página web: {str(e)}")
+        # Reintento con cabeceras de navegador si falló el bot
+        if not is_direct:
+            try:
+                with httpx.Client(follow_redirects=True, timeout=20.0, headers=browser_headers) as client:
+                    resp = client.get(url)
+                    resp.raise_for_status()
+                    content_type = resp.headers.get('content-type', '').lower()
+                    raw_data = resp.content
+                    final_url = str(resp.url)
+            except Exception:
+                raise RuntimeError(f"No se pudo descargar la imagen o página web: {str(e)}")
+        else:
+            raise RuntimeError(f"No se pudo descargar la imagen o página web: {str(e)}")
 
     if len(raw_data) > settings.MAX_FILESIZE_BYTES:
         raise ValueError("La imagen supera el límite permitido de 50 MB.")
@@ -432,41 +457,85 @@ def extract_image_content(url: str, temp_prefix: str) -> VideoExtractionResult:
 
     # 3b. Si es una página HTML (p. ej. post de Instagram /p/, X/Twitter, Threads, Pinterest, Reddit)
     html_text = raw_data.decode('utf-8', errors='ignore')
-    
-    og_img_match = (
-        re.search(r'property=[\"\']og:image[\"\']\s+content=[\"\']([^\"\']+)[\"\']', html_text, re.IGNORECASE) or
-        re.search(r'content=[\"\']([^\"\']+)[\"\']\s+property=[\"\']og:image[\"\']', html_text, re.IGNORECASE) or
-        re.search(r'name=[\"\']twitter:image[\"\']\s+content=[\"\']([^\"\']+)[\"\']', html_text, re.IGNORECASE) or
-        re.search(r'name=[\"\']twitter:image:src[\"\']\s+content=[\"\']([^\"\']+)[\"\']', html_text, re.IGNORECASE)
-    )
 
-    if not og_img_match:
+    # Si se cargó con bot pero no tiene og:image, probar una vez con browser_headers
+    if 'og:image' not in html_text and 'twitter:image' not in html_text:
+        try:
+            with httpx.Client(follow_redirects=True, timeout=15.0, headers=browser_headers) as client:
+                fb_resp = client.get(url)
+                if fb_resp.status_code == 200:
+                    html_text = fb_resp.text
+        except Exception:
+            pass
+
+    # A. Detección especial de carruseles de Instagram (diapositivas / img_index)
+    selected_img = None
+    if "instagram.com" in url.lower():
+        parsed_ig = urlparse(url)
+        qs_ig = dict(parse_qsl(parsed_ig.query))
+        target_slide = 1
+        if "img_index" in qs_ig:
+            try:
+                target_slide = int(qs_ig["img_index"])
+            except ValueError:
+                target_slide = 1
+
+        slides = []
+        seen_slides = set()
+        for m in re.finditer(r'(https://[^\s\"\'\<\>]*cdninstagram\.com[^\s\"\'\<\>]*t51\.82787-15[^\s\"\'\<\>]*)', html_text):
+            raw_img = m.group(1).replace('&amp;', '&')
+            clean_id = raw_img.split('?')[0]
+            if clean_id not in seen_slides:
+                seen_slides.add(clean_id)
+                slides.append(raw_img)
+
+        if slides:
+            slide_idx = target_slide - 1 if 0 <= target_slide - 1 < len(slides) else 0
+            selected_img = slides[slide_idx]
+            print(f"📸 Diapositiva {slide_idx + 1} de {len(slides)} seleccionada del carrusel de Instagram")
+
+    # B. Si no es carrusel o no se extrajeron diapositivas, buscar OpenGraph / Twitter meta tags
+    if not selected_img:
+        og_img_match = (
+            re.search(r'property=[\"\']og:image[\"\']\s+content=[\"\']([^\"\']+)[\"\']', html_text, re.IGNORECASE) or
+            re.search(r'content=[\"\']([^\"\']+)[\"\']\s+property=[\"\']og:image[\"\']', html_text, re.IGNORECASE) or
+            re.search(r'name=[\"\']twitter:image[\"\']\s+content=[\"\']([^\"\']+)[\"\']', html_text, re.IGNORECASE) or
+            re.search(r'name=[\"\']twitter:image:src[\"\']\s+content=[\"\']([^\"\']+)[\"\']', html_text, re.IGNORECASE)
+        )
+        if og_img_match:
+            selected_img = og_img_match.group(1).replace("&amp;", "&")
+
+    if not selected_img:
         raise ValueError("No se pudo detectar ninguna imagen o infografía en esta página.")
 
-    img_src = og_img_match.group(1).replace("&amp;", "&")
-    
+    img_src = selected_img
+
+    # Extracción y limpieza del título
     og_title_match = (
         re.search(r'property=[\"\']og:title[\"\']\s+content=[\"\']([^\"\']+)[\"\']', html_text, re.IGNORECASE) or
         re.search(r'name=[\"\']twitter:title[\"\']\s+content=[\"\']([^\"\']+)[\"\']', html_text, re.IGNORECASE) or
         re.search(r'<title>(.*?)</title>', html_text, re.IGNORECASE)
     )
-    title = og_title_match.group(1).strip() if og_title_match else "Infografía de IA"
+    raw_title = og_title_match.group(1).strip() if og_title_match else "Infografía de IA"
+    title = html.unescape(raw_title).strip()
 
+    # Extracción y limpieza de descripción
     og_desc_match = (
         re.search(r'property=[\"\']og:description[\"\']\s+content=[\"\']([^\"\']+)[\"\']', html_text, re.IGNORECASE) or
-        re.search(r'name=[\"\']twitter:description[\"\']\s+content=[\"\']([^\"\']+)[\"\']', html_text, re.IGNORECASE)
+        re.search(r'name=[\"\']twitter:description[\"\']\s+content=[\"\']([^\"\']+)[\"\']', html_text, re.IGNORECASE) or
+        re.search(r'name=[\"\']description[\"\']\s+content=[\"\']([^\"\']+)[\"\']', html_text, re.IGNORECASE)
     )
-    description = og_desc_match.group(1).strip() if og_desc_match else None
+    description = html.unescape(og_desc_match.group(1)).strip() if og_desc_match else None
 
-    # Descargar la imagen de la metaetiqueta con httpx
+    # Descargar la imagen de la metaetiqueta o CDN
     try:
-        with httpx.Client(follow_redirects=True, timeout=20.0, headers=headers) as client:
+        with httpx.Client(follow_redirects=True, timeout=20.0, headers=browser_headers) as client:
             img_resp = client.get(img_src)
             img_resp.raise_for_status()
             img_ct = img_resp.headers.get('content-type', '').lower()
             img_bytes = img_resp.content
     except Exception as e:
-        raise RuntimeError(f"No se pudo descargar la imagen referenciada ({img_src}): {str(e)}")
+        raise RuntimeError(f"No se pudo descargar la imagen referenciada ({img_src[:80]}...): {str(e)}")
 
     ext = "jpg"
     mime = "image/jpeg"
