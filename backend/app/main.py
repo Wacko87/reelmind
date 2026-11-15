@@ -499,9 +499,13 @@ async def delete_folder(folder_id: str, db: aiosqlite.Connection = Depends(get_d
 
 @app.post("/api/reels/analyze", response_model=ReelResponse, dependencies=[Depends(require_auth)])
 async def analyze_reel(request: ReelAnalyzeRequest):
+    req_type = request.media_type or "auto"
+    is_img = (req_type == "image")
+    print(f"📥 [Analyze Request] url='{request.url[:120]}' media_type='{req_type}'")
     try:
-        url = validate_and_clean_url(request.url)
+        url = validate_and_clean_url(request.url, is_image_mode=is_img)
     except ValueError as ve:
+        print(f"❌ [Analyze Validation Error] {str(ve)}")
         raise HTTPException(status_code=400, detail=str(ve))
 
     # 1. Comprobar si ya existe (comprobando url normalizada y variaciones www)
@@ -531,12 +535,13 @@ async def analyze_reel(request: ReelAnalyzeRequest):
     # 3. Extraer contenido multimedia bajo el semáforo de concurrencia
     async with extraction_semaphore:
         try:
-            req_type = request.media_type or "auto"
             extraction = await asyncio.to_thread(extract_video_and_audio, url, req_type)
         except ValueError as ve:
+            print(f"❌ [Extraction ValueError] {str(ve)}")
             raise HTTPException(status_code=400, detail=str(ve))
         except Exception as e:
-            raise HTTPException(status_code=422, detail=f"Error al obtener el vídeo: {str(e)}")
+            print(f"❌ [Extraction Exception] {str(e)}")
+            raise HTTPException(status_code=422, detail=f"Error al obtener el contenido: {str(e)}")
 
         # 4. Analizar con Gemini
         stored_thumb = extraction.thumbnail_url

@@ -6,6 +6,7 @@ import ipaddress
 import urllib.request
 from typing import Dict, Any, Optional
 from urllib.parse import urlparse, urlunparse, parse_qsl, urlencode
+import httpx
 import yt_dlp
 from .config import settings
 
@@ -26,20 +27,52 @@ ALLOWED_DOMAINS = (
     'redd.it',
     'imgur.com',
     'discordapp.com',
+    'discordapp.net',
     'discord.com',
     'civitai.com',
     'midjourney.com',
     'githubusercontent.com',
     'huggingface.co',
+    'twimg.com',
+    'cdninstagram.com',
+    'fbcdn.net',
+    'pinimg.com',
+    'googleusercontent.com',
+    'unsplash.com'
 )
 
 IMAGE_EXTENSIONS = ('.png', '.jpg', '.jpeg', '.webp', '.avif', '.gif')
+
+IMAGE_CDN_DOMAINS = (
+    'twimg.com',
+    'cdninstagram.com',
+    'fbcdn.net',
+    'redd.it',
+    'imgur.com',
+    'discordapp.com',
+    'discordapp.net',
+    'discord.com',
+    'pinimg.com',
+    'civitai.com',
+    'midjourney.com',
+    'googleusercontent.com',
+    'githubusercontent.com',
+    'unsplash.com'
+)
 
 def is_direct_image_url(url: str) -> bool:
     try:
         parsed = urlparse(url)
         path_lower = parsed.path.lower()
-        return any(path_lower.endswith(ext) for ext in IMAGE_EXTENSIONS)
+        if any(path_lower.endswith(ext) for ext in IMAGE_EXTENSIONS):
+            return True
+        q_lower = parsed.query.lower()
+        if any(f"format={ext.lstrip('.')}" in q_lower or f"ext={ext.lstrip('.')}" in q_lower for ext in IMAGE_EXTENSIONS):
+            return True
+        hostname = (parsed.hostname or "").lower()
+        if any(hostname == cdn or hostname.endswith('.' + cdn) for cdn in IMAGE_CDN_DOMAINS):
+            return True
+        return False
     except Exception:
         return False
 
@@ -102,20 +135,31 @@ def resolve_facebook_url(url: str) -> str:
 
     return url
 
-def validate_and_clean_url(url: str) -> str:
+def validate_and_clean_url(url: str, is_image_mode: bool = False) -> str:
     """
     Valida que la URL pertenezca a dominios autorizados (Anti-SSRF),
     bloquea IPs locales/privadas y limpia parámetros de tracking.
-    Soporta también data URLs de imágenes en base64 y URLs directas de imagen.
+    Soporta también data URLs de imágenes en base64, rutas locales /api/images/ y URLs directas de imagen.
     """
     target = url.strip()
+
+    # 0. Si es ruta local /api/images/
+    if target.startswith("/api/images/"):
+        return target
+
+    # 1. Si es imagen en base64 (Data URL)
     if target.startswith("data:image/"):
         if not re.match(r'^data:image/[a-zA-Z0-9\+\-\.]+;base64,', target):
             raise ValueError("Formato de imagen en base64 no válido.")
         return target
 
-    match = re.search(r'(https?://[^\s]+)', target)
-    target = match.group(1) if match else target
+    # 2. Si no tiene protocolo, asumir https://
+    if not (target.startswith("http://") or target.startswith("https://")):
+        match = re.search(r'(https?://[^\s]+)', target)
+        if match:
+            target = match.group(1)
+        else:
+            target = "https://" + target
 
     parsed = urlparse(target)
     if not parsed.netloc:
@@ -127,30 +171,39 @@ def validate_and_clean_url(url: str) -> str:
 
     hostname = (parsed.hostname or "").lower()
 
-    # 1. Protección Anti-SSRF: Bloquear localhost, nombres locales e IPs directas
+    # 3. Protección Anti-SSRF: Bloquear localhost, nombres locales e IPs directas privadas
     if hostname in ('localhost', '127.0.0.1', '0.0.0.0', '::1') or hostname.endswith('.local') or hostname.endswith('.internal'):
         raise ValueError("Acceso a direcciones locales o privadas bloqueado por seguridad (Anti-SSRF).")
 
+    is_ip = False
     try:
         ip = ipaddress.ip_address(hostname)
-        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
-            raise ValueError("Acceso a IPs privadas o de red local bloqueado por seguridad (Anti-SSRF).")
+        is_ip = True
     except ValueError:
         pass
 
-    # 2. Validación de Lista Blanca de Dominios o URL de imagen directa
-    is_direct_img = is_direct_image_url(target)
+    if is_ip and (ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved):
+        raise ValueError("Acceso a IPs privadas o de red local bloqueado por seguridad (Anti-SSRF).")
+
+    # 4. Validación de Dominio:
+    # Si es modo imagen, o es URL directa/CDN de imagen, se permite cualquier host público seguro.
+    is_direct_img = is_image_mode or is_direct_image_url(target)
     is_allowed = is_direct_img or any(hostname == domain or hostname.endswith('.' + domain) for domain in ALLOWED_DOMAINS)
     if not is_allowed:
         raise ValueError(
-            f"El dominio '{hostname}' no está permitido. ReelMind admite vídeos e infografías de TikTok, Instagram, YouTube, Facebook, X/Twitter, Threads, Pinterest, Reddit, Imgur, Discord y enlaces directos de imágenes (.png, .jpg, .webp)."
+            f"El dominio '{hostname}' no está en la lista de plataformas de vídeo compatibles. Si se trata de una infografía o imagen, selecciona la opción 'Imagen' en el selector."
         )
 
-    # 3. Limpieza de Parámetros de Telemetría/Tracking
-    filtered_queries = [
-        (k, v) for k, v in parse_qsl(parsed.query, keep_blank_values=False)
-        if k.lower() not in TRACKING_PARAMS
-    ]
+    # 5. Limpieza de Parámetros de Telemetría/Tracking
+    # Si es imagen con ?format=jpg o parámetros de formato, NO eliminarlos
+    keep_all_queries = is_direct_img and any(k in parsed.query.lower() for k in ('format=', 'ext=', 'width=', 'height=', 'quality='))
+    if keep_all_queries:
+        filtered_queries = parse_qsl(parsed.query, keep_blank_values=False)
+    else:
+        filtered_queries = [
+            (k, v) for k, v in parse_qsl(parsed.query, keep_blank_values=False)
+            if k.lower() not in TRACKING_PARAMS
+        ]
 
     clean_path = re.sub(r'/+$', '', parsed.path)
     clean_netloc = (parsed.hostname or "").lower()
@@ -171,7 +224,7 @@ def validate_and_clean_url(url: str) -> str:
         resolved = resolve_facebook_url(cleaned)
         if resolved != cleaned:
             # Re-normalizar URL canónica
-            return validate_and_clean_url(resolved)
+            return validate_and_clean_url(resolved, is_image_mode=is_image_mode)
 
     return cleaned
 
@@ -250,7 +303,39 @@ def extract_image_content(url: str, temp_prefix: str) -> VideoExtractionResult:
     import base64
     platform = detect_platform(url)
 
-    # 1. Caso Data URL (pegado directo desde portapapeles o upload en base64)
+    # 1. Caso ruta local /api/images/ (subida directa local)
+    if url.startswith("/api/images/"):
+        filename = os.path.basename(url.split("?")[0])
+        local_path = os.path.join(settings.DATA_DIR, "images", filename)
+        if not os.path.exists(local_path):
+            raise ValueError(f"No se encontró el archivo de imagen local en el servidor: {filename}")
+        
+        with open(local_path, "rb") as f:
+            raw_data = f.read()
+
+        ext = os.path.splitext(filename)[1].lstrip(".").lower() or "jpg"
+        mime = f"image/{ext}" if ext != "jpg" else "image/jpeg"
+
+        out_path = f"{temp_prefix}.{ext}"
+        with open(out_path, "wb") as f:
+            f.write(raw_data)
+
+        return VideoExtractionResult(
+            platform="upload",
+            title="Infografía / Tarjeta de Prompts IA",
+            author="Subida local",
+            author_url=None,
+            thumbnail_url=url,
+            duration=0,
+            description="Imagen o infografía subida localmente.",
+            temp_prefix=temp_prefix,
+            audio_path=None,
+            media_path=out_path,
+            mime_type=mime,
+            media_type="image"
+        )
+
+    # 2. Caso Data URL (pegado directo desde portapapeles o upload en base64)
     if url.startswith("data:image/"):
         m = re.match(r'^data:image/([a-zA-Z0-9\+\-\.]+);base64,(.+)$', url, re.DOTALL)
         if not m:
@@ -285,26 +370,27 @@ def extract_image_content(url: str, temp_prefix: str) -> VideoExtractionResult:
             media_type="image"
         )
 
-    # 2. Caso URL directa de imagen o página web con imagen
+    # 3. Caso URL remota directa de imagen o página web con imagen
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
         'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,text/html,*/*;q=0.8',
         'Accept-Language': 'es-ES,es;q=0.9,en;q=0.8',
     }
 
-    req = urllib.request.Request(url, headers=headers)
     try:
-        with urllib.request.urlopen(req, timeout=15) as resp:
+        with httpx.Client(follow_redirects=True, timeout=20.0, headers=headers) as client:
+            resp = client.get(url)
+            resp.raise_for_status()
             content_type = resp.headers.get('content-type', '').lower()
-            raw_data = resp.read(settings.MAX_FILESIZE_BYTES + 1)
-            final_url = resp.geturl()
+            raw_data = resp.content
+            final_url = str(resp.url)
     except Exception as e:
         raise RuntimeError(f"No se pudo descargar la imagen o página web: {str(e)}")
 
     if len(raw_data) > settings.MAX_FILESIZE_BYTES:
         raise ValueError("La imagen supera el límite permitido de 50 MB.")
 
-    # 2a. Si la respuesta HTTP ya es directamente una imagen (Content-Type: image/...)
+    # 3a. Si la respuesta HTTP ya es directamente una imagen (Content-Type: image/...)
     if any(content_type.startswith(p) for p in ('image/', 'application/octet-stream')) or is_direct_image_url(final_url):
         ext = "jpg"
         mime = "image/jpeg"
@@ -344,7 +430,7 @@ def extract_image_content(url: str, temp_prefix: str) -> VideoExtractionResult:
             media_type="image"
         )
 
-    # 2b. Si es una página HTML (p. ej. post de Instagram /p/, X/Twitter, Threads, Pinterest, Reddit)
+    # 3b. Si es una página HTML (p. ej. post de Instagram /p/, X/Twitter, Threads, Pinterest, Reddit)
     html_text = raw_data.decode('utf-8', errors='ignore')
     
     og_img_match = (
@@ -372,11 +458,15 @@ def extract_image_content(url: str, temp_prefix: str) -> VideoExtractionResult:
     )
     description = og_desc_match.group(1).strip() if og_desc_match else None
 
-    # Descargar la imagen de la metaetiqueta
-    img_req = urllib.request.Request(img_src, headers=headers)
-    with urllib.request.urlopen(img_req, timeout=15) as img_resp:
-        img_ct = img_resp.headers.get('content-type', '').lower()
-        img_bytes = img_resp.read(settings.MAX_FILESIZE_BYTES + 1)
+    # Descargar la imagen de la metaetiqueta con httpx
+    try:
+        with httpx.Client(follow_redirects=True, timeout=20.0, headers=headers) as client:
+            img_resp = client.get(img_src)
+            img_resp.raise_for_status()
+            img_ct = img_resp.headers.get('content-type', '').lower()
+            img_bytes = img_resp.content
+    except Exception as e:
+        raise RuntimeError(f"No se pudo descargar la imagen referenciada ({img_src}): {str(e)}")
 
     ext = "jpg"
     mime = "image/jpeg"
@@ -407,7 +497,7 @@ def extract_image_content(url: str, temp_prefix: str) -> VideoExtractionResult:
     )
 
 def extract_video_and_audio(url: str, requested_type: str = "auto") -> VideoExtractionResult:
-    cleaned_url = validate_and_clean_url(url)
+    cleaned_url = validate_and_clean_url(url, is_image_mode=(requested_type == "image"))
     platform = detect_platform(cleaned_url)
     
     unique_id = str(uuid.uuid4())
@@ -415,8 +505,8 @@ def extract_video_and_audio(url: str, requested_type: str = "auto") -> VideoExtr
     os.makedirs(temp_dir, exist_ok=True)
     temp_media_prefix = os.path.join(temp_dir, f"media_{unique_id}")
 
-    # Si se solicitó explícitamente como imagen, o es data URL, o URL directa de archivo de imagen:
-    if requested_type == "image" or cleaned_url.startswith("data:image/") or is_direct_image_url(cleaned_url):
+    # Si se solicitó explícitamente como imagen, o es data URL, o ruta local /api/images/, o URL directa de archivo de imagen:
+    if requested_type == "image" or cleaned_url.startswith("data:image/") or cleaned_url.startswith("/api/images/") or is_direct_image_url(cleaned_url):
         return extract_image_content(cleaned_url, temp_media_prefix)
 
     try:
@@ -454,9 +544,10 @@ def extract_video_and_audio(url: str, requested_type: str = "auto") -> VideoExtr
         except Exception as e:
             if requested_type == "auto":
                 try:
+                    print(f"⚠️ yt-dlp falló ({e}), intentando extraer como imagen/infografía...")
                     return extract_image_content(cleaned_url, temp_media_prefix)
-                except Exception:
-                    pass
+                except Exception as img_err:
+                    print(f"⚠️ Extracción como imagen también falló: {img_err}")
             raise RuntimeError(f"No se pudieron obtener metadatos del contenido proporcionado: {str(e)}")
 
         if not info:
