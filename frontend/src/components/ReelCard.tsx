@@ -30,10 +30,11 @@ export const ReelCard: React.FC<ReelCardProps> = React.memo(({
   onToggleStatus,
   onSelectTool,
 }) => {
-  const [useOriginalPhoto, setUseOriginalPhoto] = useState(false);
+  const isImage = reel.media_type === 'image';
+  const [useOriginalPhoto, setUseOriginalPhoto] = useState(isImage);
   const isFavorite = reel.status === 'favorite';
   const isTested = reel.status === 'tested';
-  const isLongVideo = reel.media_type === 'video' || (reel.duration && reel.duration > 600);
+  const isLongVideo = reel.media_type === 'video' || (Boolean(reel.duration) && (reel.duration || 0) > 600);
 
   const formatDuration = (seconds?: number) => {
     if (!seconds) return null;
@@ -56,6 +57,14 @@ export const ReelCard: React.FC<ReelCardProps> = React.memo(({
         return { label: isLongVideo ? 'YouTube' : 'Shorts' };
       case 'facebook':
         return { label: 'Facebook' };
+      case 'threads':
+        return { label: 'Threads' };
+      case 'pinterest':
+        return { label: 'Pinterest' };
+      case 'reddit':
+        return { label: 'Reddit' };
+      case 'upload':
+        return { label: 'Subida' };
       default:
         return { label: 'Web' };
     }
@@ -77,13 +86,13 @@ export const ReelCard: React.FC<ReelCardProps> = React.memo(({
             <img
               src={reel.thumbnail_url}
               alt={reel.title}
-              className="w-full h-full object-cover group-hover:scale-[1.03] transition-transform duration-500"
+              className={`w-full h-full ${isImage ? 'object-contain bg-black/60' : 'object-cover'} group-hover:scale-[1.03] transition-transform duration-500`}
               loading="lazy"
               decoding="async"
               onError={() => setUseOriginalPhoto(false)}
             />
             {/* Gradient Overlay */}
-            <div className="absolute inset-0 bg-gradient-to-t from-theme-bg via-theme-bg/30 to-transparent" />
+            {!isImage && <div className="absolute inset-0 bg-gradient-to-t from-theme-bg via-theme-bg/30 to-transparent" />}
           </div>
         ) : (
           <SmartThumbnailCover 
@@ -94,7 +103,12 @@ export const ReelCard: React.FC<ReelCardProps> = React.memo(({
 
         {/* Badges superiores */}
         <div className="absolute top-2.5 left-2.5 flex items-center gap-1.5 z-10 flex-wrap max-w-[70%]">
-          {isLongVideo ? (
+          {isImage ? (
+            <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-500/30 text-emerald-200 border border-emerald-400/30 shadow-sm backdrop-blur-md flex items-center gap-1">
+              <ImageIcon className="w-2.5 h-2.5" />
+              <span>Infografía</span>
+            </span>
+          ) : isLongVideo ? (
             <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-blue-500/30 text-blue-200 border border-blue-400/30 shadow-sm backdrop-blur-md flex items-center gap-1">
               <Film className="w-2.5 h-2.5" />
               <span>Vídeo {formattedDuration ? `· ${formattedDuration}` : ''}</span>

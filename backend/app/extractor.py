@@ -19,7 +19,29 @@ ALLOWED_DOMAINS = (
     'facebook.com',
     'fb.watch',
     'fb.com',
+    'threads.net',
+    'pinterest.com',
+    'pin.it',
+    'reddit.com',
+    'redd.it',
+    'imgur.com',
+    'discordapp.com',
+    'discord.com',
+    'civitai.com',
+    'midjourney.com',
+    'githubusercontent.com',
+    'huggingface.co',
 )
+
+IMAGE_EXTENSIONS = ('.png', '.jpg', '.jpeg', '.webp', '.avif', '.gif')
+
+def is_direct_image_url(url: str) -> bool:
+    try:
+        parsed = urlparse(url)
+        path_lower = parsed.path.lower()
+        return any(path_lower.endswith(ext) for ext in IMAGE_EXTENSIONS)
+    except Exception:
+        return False
 
 TRACKING_PARAMS = {
     'igsh', 'utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 
@@ -84,9 +106,16 @@ def validate_and_clean_url(url: str) -> str:
     """
     Valida que la URL pertenezca a dominios autorizados (Anti-SSRF),
     bloquea IPs locales/privadas y limpia parámetros de tracking.
+    Soporta también data URLs de imágenes en base64 y URLs directas de imagen.
     """
-    match = re.search(r'(https?://[^\s]+)', url)
-    target = match.group(1) if match else url.strip()
+    target = url.strip()
+    if target.startswith("data:image/"):
+        if not re.match(r'^data:image/[a-zA-Z0-9\+\-\.]+;base64,', target):
+            raise ValueError("Formato de imagen en base64 no válido.")
+        return target
+
+    match = re.search(r'(https?://[^\s]+)', target)
+    target = match.group(1) if match else target
 
     parsed = urlparse(target)
     if not parsed.netloc:
@@ -109,11 +138,12 @@ def validate_and_clean_url(url: str) -> str:
     except ValueError:
         pass
 
-    # 2. Validación de Lista Blanca de Dominios
-    is_allowed = any(hostname == domain or hostname.endswith('.' + domain) for domain in ALLOWED_DOMAINS)
+    # 2. Validación de Lista Blanca de Dominios o URL de imagen directa
+    is_direct_img = is_direct_image_url(target)
+    is_allowed = is_direct_img or any(hostname == domain or hostname.endswith('.' + domain) for domain in ALLOWED_DOMAINS)
     if not is_allowed:
         raise ValueError(
-            f"El dominio '{hostname}' no está permitido. ReelMind admite vídeos de TikTok, Instagram, YouTube, Facebook y X/Twitter."
+            f"El dominio '{hostname}' no está permitido. ReelMind admite vídeos e infografías de TikTok, Instagram, YouTube, Facebook, X/Twitter, Threads, Pinterest, Reddit, Imgur, Discord y enlaces directos de imágenes (.png, .jpg, .webp)."
         )
 
     # 3. Limpieza de Parámetros de Telemetría/Tracking
@@ -147,7 +177,9 @@ def validate_and_clean_url(url: str) -> str:
 
 def detect_platform(url: str) -> str:
     url_lower = url.lower()
-    if "tiktok.com" in url_lower:
+    if url_lower.startswith("data:image/"):
+        return "upload"
+    elif "tiktok.com" in url_lower:
         return "tiktok"
     elif "instagram.com" in url_lower:
         return "instagram"
@@ -157,6 +189,20 @@ def detect_platform(url: str) -> str:
         return "facebook"
     elif "x.com" in url_lower or "twitter.com" in url_lower:
         return "twitter"
+    elif "threads.net" in url_lower:
+        return "threads"
+    elif "pinterest.com" in url_lower or "pin.it" in url_lower:
+        return "pinterest"
+    elif "reddit.com" in url_lower or "redd.it" in url_lower:
+        return "reddit"
+    elif "imgur.com" in url_lower:
+        return "imgur"
+    elif "discord" in url_lower:
+        return "discord"
+    elif "civitai.com" in url_lower:
+        return "civitai"
+    elif "midjourney.com" in url_lower:
+        return "midjourney"
     return "other"
 
 def clean_url(url: str) -> str:
@@ -200,6 +246,166 @@ class VideoExtractionResult:
                 except OSError:
                     pass
 
+def extract_image_content(url: str, temp_prefix: str) -> VideoExtractionResult:
+    import base64
+    platform = detect_platform(url)
+
+    # 1. Caso Data URL (pegado directo desde portapapeles o upload en base64)
+    if url.startswith("data:image/"):
+        m = re.match(r'^data:image/([a-zA-Z0-9\+\-\.]+);base64,(.+)$', url, re.DOTALL)
+        if not m:
+            raise ValueError("Formato de imagen en base64 no válido.")
+        subtype = m.group(1).lower()
+        ext = "jpg" if subtype in ("jpeg", "jpg") else ("png" if subtype == "png" else ("webp" if subtype == "webp" else "jpg"))
+        raw_b64 = m.group(2)
+        try:
+            img_bytes = base64.b64decode(raw_b64)
+        except Exception:
+            raise ValueError("No se pudieron decodificar los datos de la imagen.")
+            
+        if len(img_bytes) > settings.MAX_FILESIZE_BYTES:
+            raise ValueError("La imagen supera el límite permitido de 50 MB.")
+
+        out_path = f"{temp_prefix}.{ext}"
+        with open(out_path, "wb") as f:
+            f.write(img_bytes)
+
+        return VideoExtractionResult(
+            platform="upload",
+            title="Infografía / Tarjeta de Prompts IA",
+            author="Portapapeles / Subida local",
+            author_url=None,
+            thumbnail_url=None,
+            duration=0,
+            description="Infografía o tarjeta de prompts capturada directamente.",
+            temp_prefix=temp_prefix,
+            audio_path=None,
+            media_path=out_path,
+            mime_type=f"image/{subtype}",
+            media_type="image"
+        )
+
+    # 2. Caso URL directa de imagen o página web con imagen
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,text/html,*/*;q=0.8',
+        'Accept-Language': 'es-ES,es;q=0.9,en;q=0.8',
+    }
+
+    req = urllib.request.Request(url, headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            content_type = resp.headers.get('content-type', '').lower()
+            raw_data = resp.read(settings.MAX_FILESIZE_BYTES + 1)
+            final_url = resp.geturl()
+    except Exception as e:
+        raise RuntimeError(f"No se pudo descargar la imagen o página web: {str(e)}")
+
+    if len(raw_data) > settings.MAX_FILESIZE_BYTES:
+        raise ValueError("La imagen supera el límite permitido de 50 MB.")
+
+    # 2a. Si la respuesta HTTP ya es directamente una imagen (Content-Type: image/...)
+    if any(content_type.startswith(p) for p in ('image/', 'application/octet-stream')) or is_direct_image_url(final_url):
+        ext = "jpg"
+        mime = "image/jpeg"
+        if "png" in content_type or final_url.lower().endswith(".png"):
+            ext = "png"
+            mime = "image/png"
+        elif "webp" in content_type or final_url.lower().endswith(".webp"):
+            ext = "webp"
+            mime = "image/webp"
+        elif "gif" in content_type or final_url.lower().endswith(".gif"):
+            ext = "gif"
+            mime = "image/gif"
+
+        out_path = f"{temp_prefix}.{ext}"
+        with open(out_path, "wb") as f:
+            f.write(raw_data)
+
+        parsed = urlparse(final_url)
+        path_name = os.path.basename(parsed.path)
+        base_title = os.path.splitext(path_name)[0]
+        clean_title = re.sub(r'[-_]+', ' ', base_title).strip()
+        if not clean_title or len(clean_title) < 3:
+            clean_title = "Infografía de Inteligencia Artificial"
+
+        return VideoExtractionResult(
+            platform=platform,
+            title=clean_title,
+            author=parsed.netloc,
+            author_url=f"https://{parsed.netloc}",
+            thumbnail_url=final_url,
+            duration=0,
+            description="Imagen o infografía técnica descargada directamente.",
+            temp_prefix=temp_prefix,
+            audio_path=None,
+            media_path=out_path,
+            mime_type=mime,
+            media_type="image"
+        )
+
+    # 2b. Si es una página HTML (p. ej. post de Instagram /p/, X/Twitter, Threads, Pinterest, Reddit)
+    html_text = raw_data.decode('utf-8', errors='ignore')
+    
+    og_img_match = (
+        re.search(r'property=[\"\']og:image[\"\']\s+content=[\"\']([^\"\']+)[\"\']', html_text, re.IGNORECASE) or
+        re.search(r'content=[\"\']([^\"\']+)[\"\']\s+property=[\"\']og:image[\"\']', html_text, re.IGNORECASE) or
+        re.search(r'name=[\"\']twitter:image[\"\']\s+content=[\"\']([^\"\']+)[\"\']', html_text, re.IGNORECASE) or
+        re.search(r'name=[\"\']twitter:image:src[\"\']\s+content=[\"\']([^\"\']+)[\"\']', html_text, re.IGNORECASE)
+    )
+
+    if not og_img_match:
+        raise ValueError("No se pudo detectar ninguna imagen o infografía en esta página.")
+
+    img_src = og_img_match.group(1).replace("&amp;", "&")
+    
+    og_title_match = (
+        re.search(r'property=[\"\']og:title[\"\']\s+content=[\"\']([^\"\']+)[\"\']', html_text, re.IGNORECASE) or
+        re.search(r'name=[\"\']twitter:title[\"\']\s+content=[\"\']([^\"\']+)[\"\']', html_text, re.IGNORECASE) or
+        re.search(r'<title>(.*?)</title>', html_text, re.IGNORECASE)
+    )
+    title = og_title_match.group(1).strip() if og_title_match else "Infografía de IA"
+
+    og_desc_match = (
+        re.search(r'property=[\"\']og:description[\"\']\s+content=[\"\']([^\"\']+)[\"\']', html_text, re.IGNORECASE) or
+        re.search(r'name=[\"\']twitter:description[\"\']\s+content=[\"\']([^\"\']+)[\"\']', html_text, re.IGNORECASE)
+    )
+    description = og_desc_match.group(1).strip() if og_desc_match else None
+
+    # Descargar la imagen de la metaetiqueta
+    img_req = urllib.request.Request(img_src, headers=headers)
+    with urllib.request.urlopen(img_req, timeout=15) as img_resp:
+        img_ct = img_resp.headers.get('content-type', '').lower()
+        img_bytes = img_resp.read(settings.MAX_FILESIZE_BYTES + 1)
+
+    ext = "jpg"
+    mime = "image/jpeg"
+    if "png" in img_ct:
+        ext = "png"
+        mime = "image/png"
+    elif "webp" in img_ct:
+        ext = "webp"
+        mime = "image/webp"
+
+    out_path = f"{temp_prefix}.{ext}"
+    with open(out_path, "wb") as f:
+        f.write(img_bytes)
+
+    return VideoExtractionResult(
+        platform=platform,
+        title=title,
+        author=urlparse(url).netloc,
+        author_url=url,
+        thumbnail_url=img_src,
+        duration=0,
+        description=description,
+        temp_prefix=temp_prefix,
+        audio_path=None,
+        media_path=out_path,
+        mime_type=mime,
+        media_type="image"
+    )
+
 def extract_video_and_audio(url: str, requested_type: str = "auto") -> VideoExtractionResult:
     cleaned_url = validate_and_clean_url(url)
     platform = detect_platform(cleaned_url)
@@ -208,6 +414,10 @@ def extract_video_and_audio(url: str, requested_type: str = "auto") -> VideoExtr
     temp_dir = os.path.join(settings.DATA_DIR, "temp")
     os.makedirs(temp_dir, exist_ok=True)
     temp_media_prefix = os.path.join(temp_dir, f"media_{unique_id}")
+
+    # Si se solicitó explícitamente como imagen, o es data URL, o URL directa de archivo de imagen:
+    if requested_type == "image" or cleaned_url.startswith("data:image/") or is_direct_image_url(cleaned_url):
+        return extract_image_content(cleaned_url, temp_media_prefix)
 
     try:
         cookies_path = os.getenv("YT_DLP_COOKIES_PATH")
@@ -242,7 +452,12 @@ def extract_video_and_audio(url: str, requested_type: str = "auto") -> VideoExtr
             with yt_dlp.YoutubeDL(ydl_opts_meta) as ydl:
                 info = ydl.extract_info(cleaned_url, download=False)
         except Exception as e:
-            raise RuntimeError(f"No se pudieron obtener metadatos del vídeo proporcionado: {str(e)}")
+            if requested_type == "auto":
+                try:
+                    return extract_image_content(cleaned_url, temp_media_prefix)
+                except Exception:
+                    pass
+            raise RuntimeError(f"No se pudieron obtener metadatos del contenido proporcionado: {str(e)}")
 
         if not info:
             raise RuntimeError("No se pudieron obtener metadatos del vídeo proporcionado.")

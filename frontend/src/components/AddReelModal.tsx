@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   X, 
   Sparkles, 
@@ -11,9 +11,12 @@ import {
   Zap,
   Info,
   CheckCircle2,
-  ArrowRight
+  ArrowRight,
+  Image as ImageIcon,
+  Upload,
+  Trash2
 } from 'lucide-react';
-import { analyzeReel } from '../api';
+import { analyzeReel, uploadImage } from '../api';
 import { Reel, Folder } from '../types';
 import { extractUrlFromText } from '../utils/url';
 
@@ -25,7 +28,7 @@ interface AddReelModalProps {
   initialUrl?: string;
   folders: Folder[];
   currentSelectedFolderId?: string | null;
-  defaultMediaType?: 'reel' | 'video';
+  defaultMediaType?: 'reel' | 'video' | 'image';
 }
 
 export const AddReelModal: React.FC<AddReelModalProps> = ({
@@ -40,17 +43,20 @@ export const AddReelModal: React.FC<AddReelModalProps> = ({
 }) => {
   const [url, setUrl] = useState(initialUrl);
   const [folderId, setFolderId] = useState<string | null>(null);
-  const [mediaType, setMediaType] = useState<'auto' | 'reel' | 'video'>('auto');
+  const [mediaType, setMediaType] = useState<'auto' | 'reel' | 'video' | 'image'>('auto');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loadingStep, setLoadingStep] = useState<string>('');
   const [duplicateReel, setDuplicateReel] = useState<Reel | null>(null);
+  const [selectedImage, setSelectedImage] = useState<{ file?: File; preview: string; name: string } | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (initialUrl) {
       setUrl(initialUrl);
     }
     setDuplicateReel(null);
+    setSelectedImage(null);
   }, [initialUrl, isOpen]);
 
   useEffect(() => {
@@ -69,6 +75,41 @@ export const AddReelModal: React.FC<AddReelModalProps> = ({
     }
   }, [currentSelectedFolderId, isOpen]);
 
+  const handleImageFile = (file: File) => {
+    if (!file.type.startsWith('image/')) {
+      setError('El archivo seleccionado no es una imagen válida.');
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const dataUrl = e.target?.result as string;
+      setSelectedImage({ file, preview: dataUrl, name: file.name });
+      setUrl(dataUrl);
+      setMediaType('image');
+      setError(null);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  useEffect(() => {
+    const handleWindowPaste = (e: ClipboardEvent) => {
+      if (!isOpen || loading) return;
+      const items = e.clipboardData?.items;
+      if (!items) return;
+      for (const item of items) {
+        if (item.type.startsWith('image/')) {
+          const file = item.getAsFile();
+          if (file) {
+            handleImageFile(file);
+            return;
+          }
+        }
+      }
+    };
+    window.addEventListener('paste', handleWindowPaste);
+    return () => window.removeEventListener('paste', handleWindowPaste);
+  }, [isOpen, loading]);
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape' && isOpen && !loading) {
@@ -83,12 +124,32 @@ export const AddReelModal: React.FC<AddReelModalProps> = ({
 
   const handlePaste = async () => {
     try {
+      const clipboardItems = await navigator.clipboard.read().catch(() => null);
+      if (clipboardItems) {
+        for (const item of clipboardItems) {
+          const imageType = item.types.find((t: string) => t.startsWith('image/'));
+          if (imageType) {
+            const blob = await item.getType(imageType);
+            const file = new File([blob], "imagen_portapapeles.png", { type: imageType });
+            handleImageFile(file);
+            return;
+          }
+        }
+      }
       const text = await navigator.clipboard.readText();
       if (text) {
         setUrl(extractUrlFromText(text));
       }
     } catch (err) {
       console.warn('No se pudo acceder al portapapeles:', err);
+    }
+  };
+
+  const handleRemoveImage = () => {
+    setSelectedImage(null);
+    setUrl('');
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
     }
   };
 
@@ -99,22 +160,33 @@ export const AddReelModal: React.FC<AddReelModalProps> = ({
     setLoading(true);
     setError(null);
     
-    if (mediaType === 'video') {
+    if (mediaType === 'image') {
+      setLoadingStep('Extrayendo texto y prompts con OCR de Gemini Vision...');
+    } else if (mediaType === 'video') {
       setLoadingStep('Extrayendo metadatos y descripción...');
     } else {
       setLoadingStep('Extrayendo información del vídeo...');
     }
 
     const timer1 = setTimeout(() => {
-      setLoadingStep('Generando resumen con Gemini...');
+      setLoadingStep('Generando ficha técnica con Gemini...');
     }, 2200);
 
     const timer2 = setTimeout(() => {
-      setLoadingStep('Extrayendo herramientas, temas y pasos clave...');
+      setLoadingStep('Detectando herramientas de IA, fórmulas y parámetros...');
     }, 4500);
 
     try {
-      const newReel = await analyzeReel(url.trim(), folderId, mediaType);
+      let submitUrl = url.trim();
+
+      // Si se seleccionó un archivo de imagen directo grande, subirlo primero
+      if (selectedImage?.file && selectedImage.file.size > 2 * 1024 * 1024) {
+        setLoadingStep('Subiendo imagen a almacenamiento local...');
+        const uploaded = await uploadImage(selectedImage.file);
+        submitUrl = uploaded.url;
+      }
+
+      const newReel = await analyzeReel(submitUrl, folderId, mediaType);
       clearTimeout(timer1);
       clearTimeout(timer2);
 
@@ -125,6 +197,7 @@ export const AddReelModal: React.FC<AddReelModalProps> = ({
 
       onReelAdded(newReel);
       setUrl('');
+      setSelectedImage(null);
       onClose();
     } catch (err: any) {
       clearTimeout(timer1);
@@ -264,7 +337,9 @@ export const AddReelModal: React.FC<AddReelModalProps> = ({
               </p>
             </div>
             <p className="text-[11px] text-claude-textMuted max-w-xs font-sans">
-              {mediaType === 'video' 
+              {mediaType === 'image'
+                ? 'Analizando la infografía con visión artificial para digitalizar prompts, herramientas y parámetros visuales.'
+                : mediaType === 'video' 
                 ? 'Sintetizando la descripción del vídeo con mínimo consumo de tokens.' 
                 : 'Analizando el contenido para extraer herramientas, prompts y pasos clave.'}
             </p>
@@ -277,15 +352,21 @@ export const AddReelModal: React.FC<AddReelModalProps> = ({
               <label className="text-xs font-medium text-claude-text flex items-center justify-between">
                 <span>Tipo de contenido:</span>
                 <span className="text-[11px] text-claude-textMuted font-mono">
-                  {mediaType === 'video' ? 'Solo enlace + resumen' : mediaType === 'reel' ? 'Vídeo + lectura OCR de prompts' : 'Detección automática'}
+                  {mediaType === 'image' 
+                    ? 'Imagen / Infografía (OCR Gemini Vision)' 
+                    : mediaType === 'video' 
+                    ? 'Solo enlace + resumen' 
+                    : mediaType === 'reel' 
+                    ? 'Vídeo + lectura OCR de prompts' 
+                    : 'Detección automática'}
                 </span>
               </label>
 
-              <div className="grid grid-cols-3 gap-2">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                 <button
                   type="button"
                   onClick={() => setMediaType('auto')}
-                  className={`p-2.5 rounded-xl border text-left transition-all flex flex-col gap-1 ${
+                  className={`p-2 rounded-xl border text-left transition-all flex flex-col gap-0.5 ${
                     mediaType === 'auto'
                       ? 'border-claude-accent bg-claude-accentSubtle text-claude-text ring-1 ring-claude-accent'
                       : 'border-claude-border bg-claude-bg/60 text-claude-textMuted hover:text-claude-text hover:bg-claude-bg'
@@ -295,15 +376,15 @@ export const AddReelModal: React.FC<AddReelModalProps> = ({
                     <Zap className="w-3.5 h-3.5 text-amber-400" />
                     <span>Auto</span>
                   </div>
-                  <span className="text-[10px] leading-tight text-claude-textMuted line-clamp-1">
-                    Según duración
+                  <span className="text-[10px] leading-tight text-claude-textMuted truncate">
+                    Detección auto
                   </span>
                 </button>
 
                 <button
                   type="button"
                   onClick={() => setMediaType('reel')}
-                  className={`p-2.5 rounded-xl border text-left transition-all flex flex-col gap-1 ${
+                  className={`p-2 rounded-xl border text-left transition-all flex flex-col gap-0.5 ${
                     mediaType === 'reel'
                       ? 'border-claude-accent bg-claude-accentSubtle text-claude-text ring-1 ring-claude-accent'
                       : 'border-claude-border bg-claude-bg/60 text-claude-textMuted hover:text-claude-text hover:bg-claude-bg'
@@ -313,7 +394,7 @@ export const AddReelModal: React.FC<AddReelModalProps> = ({
                     <Smartphone className="w-3.5 h-3.5 text-claude-accent" />
                     <span>Reel</span>
                   </div>
-                  <span className="text-[10px] leading-tight text-claude-textMuted line-clamp-1">
+                  <span className="text-[10px] leading-tight text-claude-textMuted truncate">
                     &lt; 10m (Vídeo+OCR)
                   </span>
                 </button>
@@ -321,7 +402,7 @@ export const AddReelModal: React.FC<AddReelModalProps> = ({
                 <button
                   type="button"
                   onClick={() => setMediaType('video')}
-                  className={`p-2.5 rounded-xl border text-left transition-all flex flex-col gap-1 ${
+                  className={`p-2 rounded-xl border text-left transition-all flex flex-col gap-0.5 ${
                     mediaType === 'video'
                       ? 'border-claude-accent bg-claude-accentSubtle text-claude-text ring-1 ring-claude-accent'
                       : 'border-claude-border bg-claude-bg/60 text-claude-textMuted hover:text-claude-text hover:bg-claude-bg'
@@ -331,51 +412,124 @@ export const AddReelModal: React.FC<AddReelModalProps> = ({
                     <Film className="w-3.5 h-3.5 text-blue-400" />
                     <span>Vídeo</span>
                   </div>
-                  <span className="text-[10px] leading-tight text-claude-textMuted line-clamp-1">
-                    &gt; 10 min (Enlace)
+                  <span className="text-[10px] leading-tight text-claude-textMuted truncate">
+                    &gt; 10m (Enlace)
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setMediaType('image')}
+                  className={`p-2 rounded-xl border text-left transition-all flex flex-col gap-0.5 ${
+                    mediaType === 'image'
+                      ? 'border-emerald-500 bg-emerald-500/10 text-emerald-300 ring-1 ring-emerald-500'
+                      : 'border-claude-border bg-claude-bg/60 text-claude-textMuted hover:text-claude-text hover:bg-claude-bg'
+                  }`}
+                >
+                  <div className="flex items-center gap-1.5 text-xs font-medium">
+                    <ImageIcon className="w-3.5 h-3.5 text-emerald-400" />
+                    <span>Infografía</span>
+                  </div>
+                  <span className="text-[10px] leading-tight text-claude-textMuted truncate">
+                    Imagen / Prompts
                   </span>
                 </button>
               </div>
             </div>
 
-            {/* Input URL */}
+            {/* Input URL o Previsualización de Imagen Subida */}
             <div className="space-y-1.5">
               <div className="flex items-center justify-between text-xs font-medium text-claude-text">
-                <label htmlFor="reel-url">Enlace del vídeo</label>
-                <button
-                  type="button"
-                  onClick={handlePaste}
-                  className="flex items-center gap-1 text-claude-accent hover:text-claude-accentHover text-[11px] font-medium"
-                >
-                  <ClipboardPaste className="w-3.5 h-3.5" />
-                  <span>Pegar del portapapeles</span>
-                </button>
+                <label htmlFor="reel-url">
+                  {selectedImage ? 'Imagen seleccionada' : mediaType === 'image' ? 'Enlace de la imagen o post' : 'Enlace del vídeo o publicación'}
+                </label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="file"
+                    ref={fileInputRef}
+                    accept="image/*"
+                    className="hidden"
+                    onChange={(e) => {
+                      if (e.target.files?.[0]) {
+                        handleImageFile(e.target.files[0]);
+                      }
+                    }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    className="flex items-center gap-1 text-emerald-400 hover:text-emerald-300 text-[11px] font-medium"
+                    title="Subir archivo de imagen"
+                  >
+                    <Upload className="w-3.5 h-3.5" />
+                    <span>Subir imagen</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handlePaste}
+                    className="flex items-center gap-1 text-claude-accent hover:text-claude-accentHover text-[11px] font-medium"
+                  >
+                    <ClipboardPaste className="w-3.5 h-3.5" />
+                    <span>Pegar</span>
+                  </button>
+                </div>
               </div>
 
-              <div className="relative">
-                <LinkIcon className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-claude-textMuted" />
-                <input
-                  id="reel-url"
-                  type="text"
-                  value={url}
-                  onChange={(e) => setUrl(e.target.value)}
-                  onPaste={(e) => {
-                    const pasted = e.clipboardData.getData('text');
-                    if (pasted && (pasted.includes('http://') || pasted.includes('https://'))) {
-                      e.preventDefault();
-                      setUrl(extractUrlFromText(pasted));
+              {selectedImage ? (
+                <div className="p-3 rounded-2xl bg-claude-bg border border-claude-border flex items-center justify-between gap-3 animate-in fade-in duration-200">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <img
+                      src={selectedImage.preview}
+                      alt="Preview"
+                      className="w-14 h-14 object-cover rounded-xl border border-claude-border flex-shrink-0"
+                    />
+                    <div className="min-w-0">
+                      <div className="text-xs font-medium text-claude-text truncate">
+                        {selectedImage.name}
+                      </div>
+                      <div className="text-[11px] text-emerald-400 flex items-center gap-1 mt-0.5">
+                        <CheckCircle2 className="w-3 h-3" />
+                        <span>Lista para extraer prompts con IA</span>
+                      </div>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleRemoveImage}
+                    className="p-2 rounded-xl text-claude-textMuted hover:text-rose-400 hover:bg-claude-surface transition-colors flex-shrink-0"
+                    title="Quitar imagen"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
+              ) : (
+                <div className="relative">
+                  <LinkIcon className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-claude-textMuted" />
+                  <input
+                    id="reel-url"
+                    type="text"
+                    value={url}
+                    onChange={(e) => setUrl(e.target.value)}
+                    onPaste={(e) => {
+                      const pasted = e.clipboardData.getData('text');
+                      if (pasted && (pasted.includes('http://') || pasted.includes('https://'))) {
+                        e.preventDefault();
+                        setUrl(extractUrlFromText(pasted));
+                      }
+                    }}
+                    placeholder={
+                      mediaType === 'image'
+                        ? 'https://.../infografia.png o enlace de Instagram, X, Pinterest, Reddit...'
+                        : mediaType === 'video'
+                        ? 'https://www.youtube.com/watch?v=... o https://www.facebook.com/watch/?v=...'
+                        : 'TikTok, Instagram Reels, Facebook Reels, YouTube Shorts...'
                     }
-                  }}
-                  placeholder={
-                    mediaType === 'video'
-                      ? 'https://www.youtube.com/watch?v=... o https://www.facebook.com/watch/?v=...'
-                      : 'TikTok, Instagram Reels, Facebook Reels, YouTube Shorts...'
-                  }
-                  required
-                  autoFocus
-                  className="w-full pl-10 pr-4 py-3 rounded-2xl bg-claude-bg border border-claude-border text-sm text-claude-text placeholder-claude-textMuted/50 focus:outline-none focus:border-claude-accent transition-all font-sans"
-                />
-              </div>
+                    required
+                    autoFocus
+                    className="w-full pl-10 pr-4 py-3 rounded-2xl bg-claude-bg border border-claude-border text-sm text-claude-text placeholder-claude-textMuted/50 focus:outline-none focus:border-claude-accent transition-all font-sans"
+                  />
+                </div>
+              )}
             </div>
 
             {/* Selector de Carpeta */}
@@ -398,11 +552,23 @@ export const AddReelModal: React.FC<AddReelModalProps> = ({
               </select>
             </div>
 
-            {/* Banner explicativo para vídeos largos */}
+            {/* Banner explicativo contextual */}
             <div className="p-3 rounded-2xl bg-claude-bg border border-claude-border text-[11px] text-claude-textMuted flex items-start gap-2.5 font-sans leading-relaxed">
               <Info className="w-4 h-4 text-claude-accent flex-shrink-0 mt-0.5" />
               <div>
-                <strong>Ahorro de espacio & tokens:</strong> Los vídeos de más de 10 minutos se guardan como enlace directo sin descargar archivos multimedia en tu servidor, resumiendo su contenido con el modelo de texto más eficiente.
+                {mediaType === 'image' ? (
+                  <>
+                    <strong>OCR Visual de Prompts:</strong> Gemini Vision escanea minuciosamente la imagen para extraer parámetros (--ar, estilos, negativos), herramientas y fórmulas en fichas técnicas reutilizables.
+                  </>
+                ) : mediaType === 'video' ? (
+                  <>
+                    <strong>Ahorro de espacio & tokens:</strong> Los vídeos de más de 10 minutos se guardan como enlace directo sin descargar archivos multimedia en tu servidor, resumiendo su contenido con el modelo de texto más eficiente.
+                  </>
+                ) : (
+                  <>
+                    <strong>Análisis Multimodal:</strong> Se procesa el vídeo y audio para extraer paso a paso herramientas, instrucciones y prompts mostrados en pantalla.
+                  </>
+                )}
               </div>
             </div>
 

@@ -9,8 +9,9 @@ import asyncio
 import io
 import re
 import zipfile
+import shutil
 from typing import Optional, List, Dict, Any
-from fastapi import FastAPI, HTTPException, Depends, Query, Request, Response, Header
+from fastapi import FastAPI, HTTPException, Depends, Query, Request, Response, Header, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -42,6 +43,7 @@ from .extractor import extract_video_and_audio, validate_and_clean_url
 from .gemini_service import (
     analyze_reel_with_gemini, 
     analyze_video_with_gemini,
+    analyze_image_with_gemini,
     optimize_prompt_with_gemini,
     ask_vault_with_gemini
 )
@@ -79,6 +81,9 @@ login_attempts: Dict[str, List[float]] = {}
 @app.on_event("startup")
 async def on_startup():
     await init_db()
+    
+    os.makedirs(os.path.join(settings.DATA_DIR, "images"), exist_ok=True)
+    os.makedirs(os.path.join(settings.DATA_DIR, "temp"), exist_ok=True)
     
     # Migración transparente: cifrar con Fernet (AES-128-CBC) cualquier API key en texto plano
     try:
@@ -240,6 +245,11 @@ tags:
             md += f"### Prompt #{idx}\n```text\n{p}\n```\n\n"
     else:
         md += "_No se incluyeron prompts textuales._\n\n"
+
+    if reel.get("media_type") == "image" or reel.get("thumbnail_url"):
+        img_target = reel.get('thumbnail_url') or reel.get('url')
+        if img_target:
+            md += f"## 🖼️ Ficha Visual / Infografía\n![{clean_title}]({img_target})\n\n"
 
     if reel.get("user_notes"):
         md += f"## 📝 Notas Personales\n{reel['user_notes']}\n\n"
@@ -529,6 +539,8 @@ async def analyze_reel(request: ReelAnalyzeRequest):
             raise HTTPException(status_code=422, detail=f"Error al obtener el vídeo: {str(e)}")
 
         # 4. Analizar con Gemini
+        stored_thumb = extraction.thumbnail_url
+        reel_id = str(uuid.uuid4())
         try:
             if extraction.media_type == "video":
                 # Resumen ligero para vídeos largos (>10 min): bajo consumo de tokens, 0 descargas
@@ -537,6 +549,23 @@ async def analyze_reel(request: ReelAnalyzeRequest):
                     api_key=api_key,
                     model_name=settings.GEMINI_MODEL
                 )
+            elif extraction.media_type == "image":
+                # Análisis de infografía / cheatsheet con OCR de prompts y parámetros
+                analysis: GeminiAnalysisResult = await analyze_image_with_gemini(
+                    extraction=extraction,
+                    api_key=api_key,
+                    model_name=settings.GEMINI_MODEL
+                )
+                if extraction.media_path and os.path.exists(extraction.media_path):
+                    images_dir = os.path.join(settings.DATA_DIR, "images")
+                    os.makedirs(images_dir, exist_ok=True)
+                    img_ext = os.path.splitext(extraction.media_path)[1].lower() or ".jpg"
+                    dest_img_path = os.path.join(images_dir, f"{reel_id}{img_ext}")
+                    try:
+                        shutil.copy2(extraction.media_path, dest_img_path)
+                        stored_thumb = f"/api/images/{reel_id}{img_ext}"
+                    except Exception as copy_err:
+                        print(f"Aviso al persistir imagen: {copy_err}")
             else:
                 # Análisis multimodal con audio para reels cortos (<10 min)
                 analysis: GeminiAnalysisResult = await analyze_reel_with_gemini(
@@ -550,8 +579,11 @@ async def analyze_reel(request: ReelAnalyzeRequest):
         finally:
             extraction.cleanup()
 
+    # Si la URL era un data URL en base64, usar la URL interna persistida para no engordar la DB
+    if url.startswith("data:image/") and stored_thumb:
+        url = stored_thumb
+
     # 5. Guardar en SQLite de forma atómica
-    reel_id = str(uuid.uuid4())
     now = datetime.datetime.now(datetime.timezone.utc).isoformat()
     folder_id = request.folder_id if request.folder_id else None
 
@@ -572,7 +604,7 @@ async def analyze_reel(request: ReelAnalyzeRequest):
                 extraction.author,
                 extraction.author_url,
                 extraction.title,
-                extraction.thumbnail_url,
+                stored_thumb,
                 int(round(float(extraction.duration or 0))),
                 analysis.title,
                 analysis.summary,
@@ -731,7 +763,8 @@ async def get_stats(db: aiosqlite.Connection = Depends(get_db)):
             COALESCE(SUM(CASE WHEN status = 'favorite' THEN 1 ELSE 0 END), 0) as favorite,
             COALESCE(SUM(CASE WHEN folder_id IS NULL THEN 1 ELSE 0 END), 0) as unassigned,
             COALESCE(SUM(CASE WHEN media_type = 'reel' OR media_type IS NULL THEN 1 ELSE 0 END), 0) as reels_count,
-            COALESCE(SUM(CASE WHEN media_type = 'video' THEN 1 ELSE 0 END), 0) as videos_count
+            COALESCE(SUM(CASE WHEN media_type = 'video' THEN 1 ELSE 0 END), 0) as videos_count,
+            COALESCE(SUM(CASE WHEN media_type = 'image' THEN 1 ELSE 0 END), 0) as images_count
         FROM reels
     """)
     counts = dict(await cursor.fetchone())
@@ -766,6 +799,7 @@ async def get_stats(db: aiosqlite.Connection = Depends(get_db)):
         "total": counts["total"],
         "reels_count": counts["reels_count"],
         "videos_count": counts["videos_count"],
+        "images_count": counts["images_count"],
         "pending": counts["pending"],
         "tested": counts["tested"],
         "favorite": counts["favorite"],
@@ -962,6 +996,51 @@ async def ask_vault(request: VaultAskRequest, db: aiosqlite.Connection = Depends
             return result
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Error consultando a la Bóveda con Gemini: {str(e)}")
+
+@app.get("/api/images/{filename}")
+async def get_stored_image(filename: str):
+    safe_name = os.path.basename(filename)
+    if not re.match(r'^[a-zA-Z0-9_\-\.]+$', safe_name):
+        raise HTTPException(status_code=400, detail="Nombre de archivo no válido")
+    filepath = os.path.join(settings.DATA_DIR, "images", safe_name)
+    if not os.path.isfile(filepath):
+        raise HTTPException(status_code=404, detail="Imagen no encontrada")
+    ext = os.path.splitext(safe_name)[1].lower()
+    mime = "image/png" if ext == ".png" else ("image/webp" if ext == ".webp" else ("image/gif" if ext == ".gif" else "image/jpeg"))
+    response = FileResponse(filepath, media_type=mime)
+    response.headers["Cache-Control"] = "public, max-age=604800, immutable"
+    return response
+
+@app.post("/api/upload-image", dependencies=[Depends(require_auth)])
+async def upload_image(file: UploadFile = File(...)):
+    if not file.content_type or not file.content_type.startswith("image/"):
+        raise HTTPException(status_code=400, detail="Solo se permiten archivos de imagen (.png, .jpg, .webp).")
+    
+    ext = "jpg"
+    if "png" in file.content_type:
+        ext = "png"
+    elif "webp" in file.content_type:
+        ext = "webp"
+    elif "gif" in file.content_type:
+        ext = "gif"
+
+    img_id = str(uuid.uuid4())
+    images_dir = os.path.join(settings.DATA_DIR, "images")
+    os.makedirs(images_dir, exist_ok=True)
+    dest_path = os.path.join(images_dir, f"{img_id}.{ext}")
+
+    content = await file.read()
+    if len(content) > settings.MAX_FILESIZE_BYTES:
+        raise HTTPException(status_code=400, detail="La imagen supera el límite permitido de 50 MB.")
+
+    with open(dest_path, "wb") as f:
+        f.write(content)
+
+    return {
+        "url": f"/api/images/{img_id}.{ext}",
+        "filename": f"{img_id}.{ext}",
+        "preview_url": f"/api/images/{img_id}.{ext}"
+    }
 
 # Servir frontend estático en producción con encabezados de caché para máximo rendimiento
 frontend_dist = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "frontend", "dist")

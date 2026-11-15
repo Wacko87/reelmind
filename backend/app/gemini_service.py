@@ -49,6 +49,32 @@ Reglas:
 8. 'estimated_time': Estrictamente uno de: "< 5 min", "15-30 min", o "> 1 hora".
 """
 
+SYSTEM_INSTRUCTION_IMAGE = """
+Eres un asistente experto en Inteligencia Artificial, diseño generativo y curación técnica de infografías, fichas de prompts (cheatsheets), diagramas y guías visuales.
+Tu objetivo es analizar minuciosamente la imagen proporcionada (infografía, tabla de comparación, tarjeta de prompt, diagrama de flujo, comparativa de modelos o captura técnica) y extraer toda la información práctica en ESPAÑOL.
+
+REGLAS DE ANÁLISIS VISUAL Y OCR:
+1. 'prompts': Realiza OCR exhaustivo de TODOS los prompts, parámetros y fórmulas que aparezcan escritos en la imagen:
+   - Extrae textualmente las fórmulas completas, incluyendo comandos y parámetros (ej: "--ar 16:9", "--v 6.1", "--stylize 250", "--sref", "--cref", "--seed", negative prompts, pesos de tokens o plantillas [variables]).
+   - Si la imagen muestra varias variaciones o ejemplos con sus respectivos prompts, extrae cada prompt individualmente en la lista.
+   - Si no hay un prompt textual pero sí una fórmula o estructura explicada, sintetízala en forma de prompt utilizable.
+   - Si definitivamente no contiene prompts, deja la lista vacía [].
+
+2. 'title': Título técnico, claro y profesional que describa exactamente la técnica, estilo artístico o herramienta explicada (ej: "Guía de Parámetros de Cámara para Midjourney v6", "Cheatsheet de Iluminación y Ángulos en Flux", "Fórmula de Prompts para Fotografía de Producto").
+
+3. 'summary': Resumen ejecutivo de 2 o 3 oraciones que explique qué enseña la infografía, los principios clave que expone y qué resultado visual o técnico permite lograr.
+
+4. 'ai_tools': Nombres propios exactos de las herramientas, modelos o plataformas referenciadas en la imagen (ej: "Midjourney v6.1", "Flux 1.1 Pro", "Stable Diffusion XL", "DALL-E 3", "Leonardo AI", "ComfyUI", "Claude 3.7", "ChatGPT").
+
+5. 'key_steps': Lista ordenada de los pasos, reglas, consejos o trucos desglosados en la imagen (por ejemplo: paso 1: estructura base del prompt, paso 2: modificadores de luz, paso 3: parámetros de relación de aspecto).
+
+6. 'tags': 2 a 5 etiquetas en minúsculas para clasificar la infografía (ej: "infografía", "prompts", "midjourney", "flux", "fotografía", "iluminación", "estilo").
+
+7. 'difficulty': Nivel estimado: "Principiante", "Intermedio", o "Avanzado".
+
+8. 'estimated_time': Debe ser estrictamente uno de: "< 5 min" (para cheatsheets rápidas de copiar/pegar), "15-30 min" (para guías con varios parámetros), o "> 1 hora" (para flujos de trabajo complejos o nodos).
+"""
+
 _gemini_clients: dict = {}
 FALLBACK_MODELS = ["gemini-3.1-flash-lite", "gemini-3.5-flash", "gemini-3.8-flash", "gemini-2.5-flash"]
 
@@ -147,6 +173,78 @@ async def analyze_video_with_gemini(
 
     if not response or not response.candidates:
         raise ValueError("Gemini no devolvió ninguna respuesta para el vídeo.")
+
+    candidate = response.candidates[0]
+    if candidate.finish_reason not in ("STOP", None):
+        raise ValueError(f"Generación interrumpida por Gemini con motivo: {candidate.finish_reason}")
+
+    if response.parsed and isinstance(response.parsed, GeminiAnalysisResult):
+        return response.parsed
+
+    raw_text = response.text or ""
+    clean_json = raw_text.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+
+    try:
+        result_json = json.loads(clean_json)
+        return GeminiAnalysisResult(**result_json)
+    except Exception as decode_err:
+        raise ValueError(f"Fallo al interpretar la respuesta de Gemini: {str(decode_err)}")
+
+async def analyze_image_with_gemini(
+    extraction: VideoExtractionResult,
+    api_key: str,
+    model_name: str = "gemini-3.1-flash-lite"
+) -> GeminiAnalysisResult:
+    """
+    Análisis multimodal con OCR de alta precisión para infografías, fichas de prompts (cheatsheets)
+    y capturas de pantalla de herramientas de IA.
+    Utiliza types.Part.from_bytes para procesamiento directo en memoria sin demoras.
+    """
+    if not api_key:
+        raise ValueError("Se requiere una API Key de Google Gemini válida.")
+
+    client = get_gemini_client(api_key)
+
+    image_path = extraction.media_path
+    if not image_path or not os.path.exists(image_path):
+        raise ValueError("No se encontró el archivo de imagen para analizar.")
+
+    with open(image_path, "rb") as f:
+        image_bytes = f.read()
+
+    mime_type = extraction.mime_type or "image/jpeg"
+    if not mime_type.startswith("image/"):
+        mime_type = "image/jpeg"
+
+    image_part = types.Part.from_bytes(data=image_bytes, mime_type=mime_type)
+
+    context_prompt = (
+        "Analiza detalladamente esta imagen/infografía técnica de Inteligencia Artificial.\n"
+        "Aplica OCR minucioso para extraer todos los prompts textuales, parámetros de estilo y renderizado (--ar, etc.), "
+        "herramientas o modelos de IA mencionados, pasos clave y genera la ficha técnica estructurada en JSON según las instrucciones del sistema."
+    )
+    if extraction.title and extraction.title not in ("Infografía de Inteligencia Artificial", "Infografía de IA"):
+        context_prompt += f"\nContexto o título original: {extraction.title}"
+    if extraction.description:
+        context_prompt += f"\nDescripción asociada: {extraction.description[:1000]}"
+
+    contents = [image_part, context_prompt]
+
+    response = await generate_with_fallback(
+        client=client,
+        contents=contents,
+        config=types.GenerateContentConfig(
+            system_instruction=SYSTEM_INSTRUCTION_IMAGE,
+            response_mime_type="application/json",
+            response_schema=GeminiAnalysisResult,
+            temperature=0.2,
+            max_output_tokens=2048,
+        ),
+        primary_model=model_name
+    )
+
+    if not response or not response.candidates:
+        raise ValueError("Gemini no devolvió ninguna respuesta para la imagen.")
 
     candidate = response.candidates[0]
     if candidate.finish_reason not in ("STOP", None):

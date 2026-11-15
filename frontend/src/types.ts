@@ -37,7 +37,7 @@ export interface Reel {
   user_notes: string;
   folder_id?: string | null;
   folder_name?: string | null;
-  media_type?: 'reel' | 'video';
+  media_type?: 'reel' | 'video' | 'image';
   is_duplicate?: boolean;
   created_at: string;
   updated_at: string;
@@ -72,6 +72,7 @@ export interface Stats {
   total: number;
   reels_count: number;
   videos_count: number;
+  images_count: number;
   pending: number;
   tested: number;
   favorite: number;

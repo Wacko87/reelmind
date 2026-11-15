@@ -11,7 +11,8 @@ import {
   X,
   Smartphone,
   Film,
-  Terminal
+  Terminal,
+  Image as ImageIcon
 } from 'lucide-react';
 import { Folder } from '../types';
 
@@ -26,10 +27,11 @@ interface SidebarFoldersProps {
   onSelectStatus: (status: string) => void;
   totalReels: number;
   unassignedCount: number;
-  activeSection: 'reels' | 'videos' | 'prompts';
-  onSelectSection: (section: 'reels' | 'videos' | 'prompts') => void;
+  activeSection: 'reels' | 'videos' | 'images' | 'prompts';
+  onSelectSection: (section: 'reels' | 'videos' | 'images' | 'prompts') => void;
   reelsCount?: number;
   videosCount?: number;
+  imagesCount?: number;
   isOpenMobile: boolean;
   onCloseMobile: () => void;
 }
@@ -49,6 +51,7 @@ export const SidebarFolders: React.FC<SidebarFoldersProps> = ({
   onSelectSection,
   reelsCount = 0,
   videosCount = 0,
+  imagesCount = 0,
   isOpenMobile,
   onCloseMobile,
 }) => {
@@ -203,6 +206,28 @@ export const SidebarFolders: React.FC<SidebarFoldersProps> = ({
             activeSection === 'videos' ? 'bg-black/20 text-white' : 'bg-claude-surface text-claude-textMuted'
           }`}>
             {videosCount}
+          </span>
+        </button>
+
+        <button
+          onClick={() => {
+            onSelectSection('images');
+            onCloseMobile();
+          }}
+          className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-medium transition-all ${
+            activeSection === 'images'
+              ? 'bg-claude-accent text-white font-semibold shadow-sm'
+              : 'text-claude-textMuted hover:bg-claude-surface/60 hover:text-claude-text'
+          }`}
+        >
+          <div className="flex items-center gap-2.5">
+            <ImageIcon className="w-4 h-4" />
+            <span>Infografías & Prompts</span>
+          </div>
+          <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded-md ${
+            activeSection === 'images' ? 'bg-black/20 text-white' : 'bg-claude-surface text-claude-textMuted'
+          }`}>
+            {imagesCount}
           </span>
         </button>
 

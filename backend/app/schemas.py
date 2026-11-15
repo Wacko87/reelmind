@@ -40,9 +40,9 @@ class FolderItem(BaseModel):
 FolderItem.model_rebuild()
 
 class ReelAnalyzeRequest(BaseModel):
-    url: str = Field(..., description="URL del vídeo (TikTok, Instagram Reel, YouTube Shorts, etc.)")
+    url: str = Field(..., description="URL del vídeo o imagen (TikTok, Instagram Reel/Post, YouTube, X/Twitter, infografía directa, data URL)")
     folder_id: Optional[str] = Field(None, description="ID de la carpeta donde guardarlo")
-    media_type: Optional[str] = Field("auto", description="'auto' (determina según duración <10m vs >10m), 'reel' o 'video'")
+    media_type: Optional[str] = Field("auto", description="'auto' (determina según duración o formato), 'reel', 'video' o 'image'")
 
 class GeminiAnalysisResult(BaseModel):
     title: str = Field(..., description="Título atractivo y conciso de qué trata el truco o herramienta de IA explicada")
@@ -75,7 +75,7 @@ class ReelResponse(BaseModel):
     user_notes: str
     folder_id: Optional[str] = None
     folder_name: Optional[str] = None
-    media_type: str = "reel"  # 'reel' (<10 min) o 'video' (>10 min)
+    media_type: str = "reel"  # 'reel' (<10 min), 'video' (>10 min) o 'image' (infografía/cheatsheet)
     is_duplicate: bool = False
     created_at: str
     updated_at: str

@@ -23,7 +23,9 @@ import {
   FileDown,
   Clock,
   Wand2,
-  Loader2
+  Loader2,
+  ZoomIn,
+  Image as ImageIcon
 } from 'lucide-react';
 
 interface ReelDetailModalProps {
@@ -48,14 +50,21 @@ export const ReelDetailModal: React.FC<ReelDetailModalProps> = ({
   const [notesSavedAlert, setNotesSavedAlert] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [isExportingMd, setIsExportingMd] = useState(false);
+  const [isLightboxOpen, setIsLightboxOpen] = useState(false);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape') {
+        if (isLightboxOpen) {
+          setIsLightboxOpen(false);
+        } else {
+          onClose();
+        }
+      }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [onClose]);
+  }, [onClose, isLightboxOpen]);
 
   // Estados de optimización de prompts
   const [activeOptimizerIndex, setActiveOptimizerIndex] = useState<number | null>(null);
@@ -314,6 +323,40 @@ export const ReelDetailModal: React.FC<ReelDetailModalProps> = ({
         {/* Scrollable Modal Body */}
         <div className="p-4 sm:p-6 space-y-6 overflow-y-auto">
           
+          {/* Si es infografía / imagen: visor interactivo con zoom lightbox */}
+          {reel.media_type === 'image' && (
+            <div className="space-y-3">
+              <div className="relative rounded-2xl overflow-hidden border border-claude-border bg-black/60 group">
+                <img
+                  src={reel.thumbnail_url || reel.url}
+                  alt={reel.title}
+                  className="w-full max-h-[480px] object-contain rounded-2xl cursor-zoom-in transition-all"
+                  onClick={() => setIsLightboxOpen(true)}
+                />
+                <div className="absolute bottom-3 right-3 flex items-center gap-2">
+                  <button
+                    onClick={() => setIsLightboxOpen(true)}
+                    className="px-3 py-1.5 rounded-xl bg-black/75 hover:bg-black text-white text-xs font-medium border border-white/20 backdrop-blur-md flex items-center gap-1.5 shadow-lg transition-all"
+                  >
+                    <ZoomIn className="w-3.5 h-3.5" />
+                    <span>Ver en grande</span>
+                  </button>
+                  {reel.url && !reel.url.startsWith('/api/') && !reel.url.startsWith('data:') && (
+                    <a
+                      href={safeExternalUrl(reel.url)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="px-3 py-1.5 rounded-xl bg-claude-accent hover:bg-claude-accentHover text-white text-xs font-medium shadow-lg flex items-center gap-1.5 transition-all"
+                    >
+                      <ExternalLink className="w-3.5 h-3.5" />
+                      <span>Fuente</span>
+                    </a>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Si es vídeo largo: reproductor incrustado o banner con enlace directo */}
           {isLongVideo && (
             <div className="space-y-3">
@@ -681,7 +724,7 @@ export const ReelDetailModal: React.FC<ReelDetailModalProps> = ({
                 rel="noopener noreferrer"
                 className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-claude-accent hover:bg-claude-accentHover text-white text-xs font-semibold shadow-sm transition-all"
               >
-                <span>Abrir vídeo original</span>
+                <span>{reel.media_type === 'image' ? 'Abrir imagen original' : 'Abrir vídeo original'}</span>
                 <ExternalLink className="w-3.5 h-3.5" />
               </a>
             </div>
@@ -690,6 +733,28 @@ export const ReelDetailModal: React.FC<ReelDetailModalProps> = ({
         </div>
 
       </div>
+
+      {/* Lightbox a pantalla completa para inspeccionar infografías y prompts */}
+      {isLightboxOpen && (
+        <div 
+          className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-6 bg-black/95 backdrop-blur-md animate-in fade-in duration-200"
+          onClick={() => setIsLightboxOpen(false)}
+        >
+          <button
+            onClick={() => setIsLightboxOpen(false)}
+            className="absolute top-4 right-4 z-50 p-2.5 rounded-2xl bg-white/10 hover:bg-white/20 text-white transition-all"
+            title="Cerrar visor"
+          >
+            <X className="w-6 h-6" />
+          </button>
+          <img
+            src={reel.thumbnail_url || reel.url}
+            alt={reel.title}
+            className="max-w-full max-h-full object-contain rounded-xl shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          />
+        </div>
+      )}
 
     </div>
   );

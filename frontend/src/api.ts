@@ -145,7 +145,7 @@ export async function fetchReels(
 export async function analyzeReel(
   url: string, 
   folder_id?: string | null,
-  media_type?: 'auto' | 'reel' | 'video'
+  media_type?: 'auto' | 'reel' | 'video' | 'image'
 ): Promise<Reel> {
   const res = await fetch(`${API_BASE}/reels/analyze`, {
     method: 'POST',
@@ -156,6 +156,25 @@ export async function analyzeReel(
   return handleResponse<Reel>(res);
 }
 
+export async function uploadImage(file: File): Promise<{ url: string; filename: string; preview_url: string }> {
+  const formData = new FormData();
+  formData.append('file', file);
+
+  const token = localStorage.getItem('reelmind_token');
+  const headers: Record<string, string> = {};
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+
+  const res = await fetch(`${API_BASE}/upload-image`, {
+    method: 'POST',
+    headers,
+    body: formData,
+    signal: AbortSignal.timeout(30000),
+  });
+  return handleResponse<{ url: string; filename: string; preview_url: string }>(res);
+}
+
 export async function updateReel(
   id: string,
   updates: {
@@ -164,7 +183,7 @@ export async function updateReel(
     title?: string;
     tags?: string[];
     folder_id?: string | null;
-    media_type?: 'reel' | 'video';
+    media_type?: 'reel' | 'video' | 'image';
     estimated_time?: string;
   }
 ): Promise<Reel> {

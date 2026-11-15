@@ -36,7 +36,8 @@ import {
   Smartphone,
   Film,
   Terminal,
-  ExternalLink
+  ExternalLink,
+  Image as ImageIcon
 } from 'lucide-react';
 
 export const App: React.FC = () => {
@@ -46,8 +47,8 @@ export const App: React.FC = () => {
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [loading, setLoading] = useState(true);
 
-  // Apartado activo: 'reels' (<10 min), 'videos' (>10 min) o 'prompts'
-  const [activeSection, setActiveSection] = useState<'reels' | 'videos' | 'prompts'>('reels');
+  // Apartado activo: 'reels' (<10 min), 'videos' (>10 min), 'images' (infografías) o 'prompts'
+  const [activeSection, setActiveSection] = useState<'reels' | 'videos' | 'images' | 'prompts'>('reels');
 
   // Autenticación por PIN
   const [authRequired, setAuthRequired] = useState(false);
@@ -96,7 +97,8 @@ export const App: React.FC = () => {
   // Carga de carpetas filtradas según el apartado activo
   const loadFolders = useCallback(async () => {
     try {
-      const data = await fetchFolders(activeSection === 'prompts' ? undefined : (activeSection === 'reels' ? 'reel' : 'video'));
+      const folderMediaType = activeSection === 'prompts' ? undefined : (activeSection === 'reels' ? 'reel' : (activeSection === 'videos' ? 'video' : 'image'));
+      const data = await fetchFolders(folderMediaType);
       setFolders(data);
     } catch (err) {
       console.error('Error cargando carpetas:', err);
@@ -120,7 +122,7 @@ export const App: React.FC = () => {
   // Carga de reels y datos con cancelación de peticiones anteriores
   const loadData = useCallback(async (signal?: AbortSignal) => {
     try {
-      const mediaTypeParam = activeSection === 'prompts' ? undefined : (activeSection === 'reels' ? 'reel' : 'video');
+      const mediaTypeParam = activeSection === 'prompts' ? undefined : (activeSection === 'reels' ? 'reel' : (activeSection === 'videos' ? 'video' : 'image'));
       const [reelsData, statsData] = await Promise.all([
         fetchReels({
           q: searchQuery,
@@ -336,6 +338,7 @@ export const App: React.FC = () => {
           onSelectSection={setActiveSection}
           reelsCount={stats?.reels_count || 0}
           videosCount={stats?.videos_count || 0}
+          imagesCount={stats?.images_count || 0}
           isOpenMobile={isMobileSidebarOpen}
           onCloseMobile={() => setIsMobileSidebarOpen(false)}
         />
@@ -343,7 +346,7 @@ export const App: React.FC = () => {
         {/* Área Principal de Contenido */}
         <main className="flex-1 min-w-0 px-3 sm:px-6 lg:px-8 py-4 sm:py-6">
           
-          {/* Selector de Apartados: Reels (<10m) vs Vídeos (>10m) vs Prompts */}
+          {/* Selector de Apartados: Reels (<10m) vs Vídeos (>10m) vs Infografías vs Prompts */}
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6 pb-4 border-b border-claude-border">
             <div className="flex items-center gap-1 sm:gap-1.5 p-1 rounded-2xl bg-claude-surface border border-claude-border shadow-sm overflow-x-auto scrollbar-none w-full sm:w-auto">
               <button
@@ -383,6 +386,24 @@ export const App: React.FC = () => {
               </button>
 
               <button
+                onClick={() => setActiveSection('images')}
+                className={`flex-1 sm:flex-initial flex items-center justify-center gap-1.5 sm:gap-2 px-2.5 sm:px-3.5 py-2 rounded-xl text-xs sm:text-sm font-semibold transition-all whitespace-nowrap ${
+                  activeSection === 'images'
+                    ? 'bg-claude-accent text-white shadow-sm'
+                    : 'text-claude-textMuted hover:text-claude-text hover:bg-claude-bg/50'
+                }`}
+              >
+                <ImageIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4 flex-shrink-0" />
+                <span className="sm:hidden">Imágenes</span>
+                <span className="hidden sm:inline">Infografías & Prompts</span>
+                <span className={`text-[10px] sm:text-[11px] font-mono px-1.5 sm:px-2 py-0.5 rounded-full ${
+                  activeSection === 'images' ? 'bg-black/25 text-white' : 'bg-claude-bg text-claude-textMuted'
+                }`}>
+                  {stats?.images_count ?? 0}
+                </span>
+              </button>
+
+              <button
                 onClick={() => setActiveSection('prompts')}
                 className={`flex-1 sm:flex-initial flex items-center justify-center gap-1.5 sm:gap-2 px-2.5 sm:px-3.5 py-2 rounded-xl text-xs sm:text-sm font-semibold transition-all whitespace-nowrap ${
                   activeSection === 'prompts'
@@ -406,6 +427,11 @@ export const App: React.FC = () => {
                 <span className="flex items-center gap-1.5 text-claude-accent font-medium">
                   <Terminal className="w-3.5 h-3.5 flex-shrink-0" />
                   <span>Cheatsheet de prompts con optimizador y adaptador de modelos IA</span>
+                </span>
+              ) : activeSection === 'images' ? (
+                <span className="flex items-center gap-1.5 text-emerald-400 font-medium">
+                  <ImageIcon className="w-3.5 h-3.5 flex-shrink-0" />
+                  <span>Infografías, tarjetas y capturas analizadas con OCR de prompts</span>
                 </span>
               ) : activeSection === 'reels' ? (
                 <span className="flex items-center gap-1.5 text-claude-textMuted">
@@ -530,6 +556,8 @@ export const App: React.FC = () => {
                       ? 'Sin resultados para estos filtros'
                       : activeSection === 'reels'
                       ? 'Sin reels cortos en este apartado'
+                      : activeSection === 'images'
+                      ? 'Sin infografías o fichas de prompts'
                       : 'Sin vídeos largos en este apartado'}
                   </h3>
                   <p className="text-xs text-claude-textMuted mb-5 leading-relaxed font-sans">
@@ -537,6 +565,8 @@ export const App: React.FC = () => {
                       ? 'Prueba a cambiar los términos de búsqueda o a limpiar los filtros activos.'
                       : activeSection === 'reels'
                       ? 'Guarda reels de TikTok, Instagram o YouTube Shorts (<10 min) para procesar su audio con IA.'
+                      : activeSection === 'images'
+                      ? 'Guarda infografías de IA, tablas de parámetros o capturas de prompts para extraer sus fórmulas con OCR.'
                       : 'Guarda tutoriales o conferencias de YouTube (>10 min) para tener su enlace directo y resumen inteligente sin descargar archivos.'}
                   </p>
                   {searchQuery || selectedTool || selectedTag || statusFilter || selectedFolderId || selectedTime ? (
@@ -555,7 +585,7 @@ export const App: React.FC = () => {
                       className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-claude-accent hover:bg-claude-accentHover text-white text-xs font-semibold shadow-sm"
                     >
                       <Plus className="w-4 h-4" />
-                      <span>{activeSection === 'reels' ? 'Guardar reel aquí' : 'Guardar vídeo aquí'}</span>
+                      <span>{activeSection === 'reels' ? 'Guardar reel aquí' : activeSection === 'images' ? 'Guardar infografía aquí' : 'Guardar vídeo aquí'}</span>
                     </button>
                   )}
                 </div>
@@ -588,7 +618,7 @@ export const App: React.FC = () => {
             initialUrl={initialUrlForModal}
             folders={folders}
             currentSelectedFolderId={selectedFolderId}
-            defaultMediaType={activeSection === 'reels' ? 'reel' : 'video'}
+            defaultMediaType={activeSection === 'reels' ? 'reel' : (activeSection === 'videos' ? 'video' : (activeSection === 'images' ? 'image' : undefined))}
           />
         )}
 
