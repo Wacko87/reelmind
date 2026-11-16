@@ -76,7 +76,7 @@ REGLAS DE ANÁLISIS VISUAL Y OCR:
 """
 
 _gemini_clients: dict = {}
-FALLBACK_MODELS = ["gemini-3.1-flash-lite", "gemini-3.5-flash", "gemini-3.8-flash", "gemini-2.5-flash"]
+FALLBACK_MODELS = ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-3.8-flash"]
 
 def get_gemini_client(api_key: str) -> genai.Client:
     """Reutiliza clientes de Gemini para evitar fugas de pools de conexión httpx/client.aio."""
@@ -88,7 +88,7 @@ async def generate_with_fallback(
     client: genai.Client,
     contents,
     config: types.GenerateContentConfig,
-    primary_model: str = "gemini-3.1-flash-lite",
+    primary_model: str = "gemini-3.5-flash-lite",
     max_retries: int = 2
 ):
     """
@@ -126,7 +126,7 @@ async def generate_with_fallback(
 async def analyze_video_with_gemini(
     extraction: VideoExtractionResult,
     api_key: str,
-    model_name: str = "gemini-3.1-flash-lite"
+    model_name: str = "gemini-3.5-flash-lite"
 ) -> GeminiAnalysisResult:
     """
     Análisis ligero y económico en tokens para vídeos largos (>10 min):
@@ -194,7 +194,7 @@ async def analyze_video_with_gemini(
 async def analyze_image_with_gemini(
     extraction: VideoExtractionResult,
     api_key: str,
-    model_name: str = "gemini-3.1-flash-lite"
+    model_name: str = "gemini-3.5-flash-lite"
 ) -> GeminiAnalysisResult:
     """
     Análisis multimodal con OCR de alta precisión para infografías, fichas de prompts (cheatsheets),
@@ -277,7 +277,7 @@ async def analyze_image_with_gemini(
 async def analyze_reel_with_gemini(
     extraction: VideoExtractionResult,
     api_key: str,
-    model_name: str = "gemini-3.1-flash-lite"
+    model_name: str = "gemini-3.5-flash-lite"
 ) -> GeminiAnalysisResult:
     if not api_key:
         raise ValueError("Se requiere una API Key de Google Gemini válida.")
@@ -388,7 +388,7 @@ async def optimize_prompt_with_gemini(
     mode: str = "variations",
     target_model: Optional[str] = None,
     api_key: str = "",
-    model_name: str = "gemini-3.1-flash-lite"
+    model_name: str = "gemini-3.5-flash-lite"
 ) -> PromptOptimizeResponse:
     """
     Genera 3 variaciones creativas o adapta un prompt a un modelo concreto (Midjourney, Flux, etc.).
@@ -438,7 +438,7 @@ async def ask_vault_with_gemini(
     question: str,
     vault_items: list[dict],
     api_key: str,
-    model_name: str = "gemini-3.1-flash-lite"
+    model_name: str = "gemini-3.5-flash-lite"
 ) -> VaultAskResponse:
     """
     RAG ligero sobre las fichas guardadas en la bóveda de ReelMind.

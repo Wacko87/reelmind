@@ -151,7 +151,7 @@ export async function analyzeReel(
     method: 'POST',
     headers: getAuthHeaders(),
     body: JSON.stringify({ url, folder_id, media_type: media_type || 'auto' }),
-    signal: AbortSignal.timeout(120000),
+    signal: AbortSignal.timeout(180000),
   });
   return handleResponse<Reel>(res);
 }
