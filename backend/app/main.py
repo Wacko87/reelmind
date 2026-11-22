@@ -53,15 +53,26 @@ app = FastAPI(title="ReelMind API", version="1.4.0")
 # Compresión automática de respuestas HTTP (>1KB) para menor latencia en móvil
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
+# Orígenes autorizados estrictos para CORS (eliminando comodín permisivo '*')
+ALLOWED_ORIGINS = [
+    "https://reels.wacko87.es",
+    "http://192.168.11.237:8000",
+    "http://192.168.7.160:8000",
+    "http://localhost:5173",
+    "http://localhost:8000",
+    "http://127.0.0.1:5173",
+    "http://127.0.0.1:8000",
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "Accept", "X-Service-Key"],
 )
 
-# Middleware de Cabeceras de Seguridad HTTP (Security Headers)
+# Middleware de Cabeceras de Seguridad HTTP (Security Headers & CSP)
 @app.middleware("http")
 async def security_headers_middleware(request: Request, call_next):
     response = await call_next(request)
@@ -69,6 +80,15 @@ async def security_headers_middleware(request: Request, call_next):
     response.headers["X-Frame-Options"] = "SAMEORIGIN"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     response.headers["X-XSS-Protection"] = "1; mode=block"
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline'; "
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+        "font-src 'self' https://fonts.gstatic.com data:; "
+        "img-src 'self' data: blob: https:; "
+        "connect-src 'self' https:; "
+        "frame-ancestors 'self';"
+    )
     return response
 
 # Semáforo de concurrencia para proteger CPU ffmpeg y cuota Gemini
@@ -286,15 +306,23 @@ async def auth_status(request: Request, authorization: Optional[str] = Header(No
     is_auth = verify_token_string(token) if token else False
     return {"auth_required": True, "is_authenticated": is_auth}
 
+def prune_login_attempts(now_ts: float):
+    """Depura periódicamente entradas caducadas en login_attempts para mitigar fugas de memoria."""
+    if len(login_attempts) > 500:
+        expired = [ip for ip, timestamps in list(login_attempts.items()) if not timestamps or (now_ts - timestamps[-1] > 300)]
+        for ip in expired:
+            login_attempts.pop(ip, None)
+
 @app.post("/api/auth/login", response_model=LoginResponse)
 async def login(data: LoginRequest, request: Request, response: Response):
     if not settings.AUTH_PIN:
         return {"success": True, "message": "Acceso libre (sin PIN configurado)"}
 
     # Control de fuerza bruta por IP (respetando proxy inverso Nginx Proxy Manager): máx 5 intentos por minuto
+    now_ts = time.time()
+    prune_login_attempts(now_ts)
     forwarded = request.headers.get("x-forwarded-for")
     client_ip = forwarded.split(",")[0].strip() if forwarded else (request.client.host if request.client else "unknown")
-    now_ts = time.time()
     attempts = [t for t in login_attempts.get(client_ip, []) if now_ts - t < 60]
     
     if len(attempts) >= 5:
@@ -1038,22 +1066,27 @@ async def upload_image(file: UploadFile = File(...)):
     if not file.content_type or not file.content_type.startswith("image/"):
         raise HTTPException(status_code=400, detail="Solo se permiten archivos de imagen (.png, .jpg, .webp).")
     
+    content = await file.read()
+    if len(content) > settings.MAX_FILESIZE_BYTES:
+        raise HTTPException(status_code=400, detail="La imagen supera el límite permitido de 50 MB.")
+
+    # Verificación estricta de Magic Bytes en cabecera binaria
     ext = "jpg"
-    if "png" in file.content_type:
+    if content.startswith(b'\xff\xd8\xff'):
+        ext = "jpg"
+    elif content.startswith(b'\x89PNG\r\n\x1a\n'):
         ext = "png"
-    elif "webp" in file.content_type:
-        ext = "webp"
-    elif "gif" in file.content_type:
+    elif content.startswith(b'GIF87a') or content.startswith(b'GIF89a'):
         ext = "gif"
+    elif len(content) >= 12 and content[:4] == b'RIFF' and content[8:12] == b'WEBP':
+        ext = "webp"
+    else:
+        raise HTTPException(status_code=400, detail="El archivo no contiene una estructura binaria de imagen válida (.jpg, .png, .webp, .gif).")
 
     img_id = str(uuid.uuid4())
     images_dir = os.path.join(settings.DATA_DIR, "images")
     os.makedirs(images_dir, exist_ok=True)
     dest_path = os.path.join(images_dir, f"{img_id}.{ext}")
-
-    content = await file.read()
-    if len(content) > settings.MAX_FILESIZE_BYTES:
-        raise HTTPException(status_code=400, detail="La imagen supera el límite permitido de 50 MB.")
 
     with open(dest_path, "wb") as f:
         f.write(content)

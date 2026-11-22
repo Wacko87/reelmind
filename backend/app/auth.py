@@ -46,22 +46,34 @@ def verify_token_string(token: str) -> bool:
 
 async def require_auth(
     request: Request,
-    authorization: Optional[str] = Header(None)
+    authorization: Optional[str] = Header(None),
+    x_service_key: Optional[str] = Header(None)
 ):
     """
     Dependencia de FastAPI.
-    Si AUTH_PIN no está configurado en .env, permite el acceso libre.
-    Si AUTH_PIN está configurado, exige un token válido.
+    1. Si se proporciona una X-Service-Key o Bearer correspondiente a SERVICE_API_KEY, permite acceso a demonios.
+    2. Si AUTH_PIN no está configurado en .env, permite el acceso libre.
+    3. Si AUTH_PIN está configurado, exige un token de sesión o clave de servicio válida.
     """
+    # 1. Verificación de Service Key para scripts y demonios (ej. sync-reelmind-obsidian)
+    if settings.SERVICE_API_KEY:
+        if x_service_key and hmac.compare_digest(x_service_key.strip(), settings.SERVICE_API_KEY.strip()):
+            return True
+        if authorization and authorization.startswith("Bearer "):
+            bearer_val = authorization.split("Bearer ", 1)[1].strip()
+            if hmac.compare_digest(bearer_val, settings.SERVICE_API_KEY.strip()):
+                return True
+
+    # 2. Si no hay PIN configurado en el servidor, acceso libre
     if not settings.AUTH_PIN:
         return True
 
-    # 1. Verificar cabecera Authorization: Bearer <token>
+    # 3. Verificar cabecera Authorization: Bearer <token_de_sesion>
     token = None
     if authorization and authorization.startswith("Bearer "):
         token = authorization.split("Bearer ", 1)[1].strip()
 
-    # 2. Verificar cookie de sesión alternativa
+    # 4. Verificar cookie de sesión alternativa
     if not token:
         token = request.cookies.get("reelmind_auth")
 

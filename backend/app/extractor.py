@@ -3,14 +3,33 @@ import uuid
 import re
 import glob
 import html
+import socket
 import ipaddress
-import urllib.request
 from typing import Dict, Any, Optional
 from urllib.parse import urlparse, urlunparse, parse_qsl, urlencode
 import httpx
 import json
 import yt_dlp
 from .config import settings
+
+def is_safe_public_host(hostname: str) -> bool:
+    """
+    Verifica mediante resolución DNS que el host no resuelva a direcciones IP
+    privadas, bucle local (loopback), enlace local o reservadas de red interna (Anti-SSRF).
+    """
+    clean_host = hostname.strip().lower()
+    if clean_host in ('localhost', '127.0.0.1', '0.0.0.0', '::1') or clean_host.endswith('.local') or clean_host.endswith('.internal'):
+        return False
+    try:
+        addr_info = socket.getaddrinfo(clean_host, None)
+        for _, _, _, _, sockaddr in addr_info:
+            ip_str = sockaddr[0]
+            ip = ipaddress.ip_address(ip_str)
+            if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast:
+                return False
+        return True
+    except Exception:
+        return False
 
 ALLOWED_DOMAINS = (
     'tiktok.com',
@@ -96,7 +115,7 @@ def resolve_facebook_url(url: str) -> str:
     
     yt-dlp no reconoce directamente el path /share/r/ sin resolver.
     Esta función extrae el enlace canónico (og:url / canonical) o el reel ID
-    resolviendo la petición HTTP de forma segura.
+    resolviendo la petición HTTP mediante httpx sin seguir redirecciones inseguras.
     """
     url_lower = url.lower()
     if not ('facebook.com/share/' in url_lower or 'fb.watch/' in url_lower):
@@ -109,18 +128,18 @@ def resolve_facebook_url(url: str) -> str:
     }
 
     try:
-        req = urllib.request.Request(url, headers=headers)
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            final_url = resp.geturl()
-            if any(k in final_url for k in ('/reel/', '/watch/', '/videos/')):
-                return final_url
+        with httpx.Client(follow_redirects=False, timeout=10.0, headers=headers) as client:
+            resp = client.get(url)
+            # Si hay redirección HTTP, validar el destino antes de aceptarlo
+            if resp.status_code in (301, 302, 303, 307, 308):
+                location = resp.headers.get("location")
+                if location:
+                    parsed_loc = urlparse(location)
+                    if parsed_loc.hostname and is_safe_public_host(parsed_loc.hostname):
+                        if any(k in location for k in ('/reel/', '/watch/', '/videos/')):
+                            return location
 
-            refresh = resp.headers.get('refresh', '')
-            match_ref = re.search(r'(?:fullscreen_video/|video_id=|v=|reel/|videos/)(\d+)', refresh)
-            if match_ref:
-                return f"https://facebook.com/reel/{match_ref.group(1)}"
-
-            body = resp.read(65536).decode('utf-8', errors='ignore')
+            body = resp.text[:65536]
             
             og_match = re.search(r'property=[\"\']og:url[\"\']\s+content=[\"\']([^\"\']+)[\"\']', body)
             if og_match and any(k in og_match.group(1) for k in ('/reel/', '/watch', '/videos/')):
@@ -174,19 +193,9 @@ def validate_and_clean_url(url: str, is_image_mode: bool = False) -> str:
 
     hostname = (parsed.hostname or "").lower()
 
-    # 3. Protección Anti-SSRF: Bloquear localhost, nombres locales e IPs directas privadas
-    if hostname in ('localhost', '127.0.0.1', '0.0.0.0', '::1') or hostname.endswith('.local') or hostname.endswith('.internal'):
-        raise ValueError("Acceso a direcciones locales o privadas bloqueado por seguridad (Anti-SSRF).")
-
-    is_ip = False
-    try:
-        ip = ipaddress.ip_address(hostname)
-        is_ip = True
-    except ValueError:
-        pass
-
-    if is_ip and (ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved):
-        raise ValueError("Acceso a IPs privadas o de red local bloqueado por seguridad (Anti-SSRF).")
+    # 3. Protección Anti-SSRF: Bloquear localhost, nombres locales e IPs directas o resueltas privadas
+    if not is_safe_public_host(hostname):
+        raise ValueError("Acceso a direcciones locales, privadas o internas bloqueado por seguridad (Anti-SSRF).")
 
     # 4. Validación de Dominio:
     # Si es modo imagen, o es URL directa/CDN de imagen, se permite cualquier host público seguro.

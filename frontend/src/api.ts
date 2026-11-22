@@ -3,7 +3,7 @@ import { Reel, Stats, AppSettings, Folder, AuthStatus, PromptOptimizeResponse, V
 const API_BASE = '/api';
 
 function getAuthHeaders(): HeadersInit {
-  const token = localStorage.getItem('reelmind_token');
+  const token = sessionStorage.getItem('reelmind_token');
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
   };
@@ -11,6 +11,17 @@ function getAuthHeaders(): HeadersInit {
     headers['Authorization'] = `Bearer ${token}`;
   }
   return headers;
+}
+
+/**
+ * Cliente HTTP seguro que siempre envía cookies HttpOnly de sesión (credentials: 'include')
+ */
+async function apiFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  const options: RequestInit = {
+    ...init,
+    credentials: 'include',
+  };
+  return fetch(input, options);
 }
 
 async function handleResponse<T>(res: Response): Promise<T> {
@@ -34,7 +45,7 @@ async function handleResponse<T>(res: Response): Promise<T> {
 }
 
 export async function checkAuthStatus(): Promise<AuthStatus> {
-  const res = await fetch(`${API_BASE}/auth/status`, {
+  const res = await apiFetch(`${API_BASE}/auth/status`, {
     headers: getAuthHeaders(),
     signal: AbortSignal.timeout(10000),
   });
@@ -42,7 +53,7 @@ export async function checkAuthStatus(): Promise<AuthStatus> {
 }
 
 export async function loginWithPin(pin: string): Promise<boolean> {
-  const res = await fetch(`${API_BASE}/auth/login`, {
+  const res = await apiFetch(`${API_BASE}/auth/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ pin }),
@@ -50,14 +61,21 @@ export async function loginWithPin(pin: string): Promise<boolean> {
   });
   const data = await handleResponse<{ success: boolean; token?: string }>(res);
   if (data.token) {
-    localStorage.setItem('reelmind_token', data.token);
+    // Almacenar en sessionStorage (en memoria de la pestaña activa, sin persistir en localStorage)
+    sessionStorage.setItem('reelmind_token', data.token);
   }
+  try {
+    localStorage.removeItem('reelmind_token');
+  } catch {}
   return Boolean(data.success);
 }
 
 export async function logout(): Promise<void> {
-  localStorage.removeItem('reelmind_token');
-  await fetch(`${API_BASE}/auth/logout`, {
+  try {
+    sessionStorage.removeItem('reelmind_token');
+    localStorage.removeItem('reelmind_token');
+  } catch {}
+  await apiFetch(`${API_BASE}/auth/logout`, {
     method: 'POST',
     signal: AbortSignal.timeout(5000),
   }).catch(() => {});
@@ -65,7 +83,7 @@ export async function logout(): Promise<void> {
 
 export async function fetchFolders(media_type?: string): Promise<Folder[]> {
   const query = media_type ? `?media_type=${encodeURIComponent(media_type)}` : '';
-  const res = await fetch(`${API_BASE}/folders${query}`, {
+  const res = await apiFetch(`${API_BASE}/folders${query}`, {
     headers: getAuthHeaders(),
     signal: AbortSignal.timeout(15000),
   });
@@ -78,7 +96,7 @@ export async function createFolder(data: {
   icon?: string;
   color?: string;
 }): Promise<Folder> {
-  const res = await fetch(`${API_BASE}/folders`, {
+  const res = await apiFetch(`${API_BASE}/folders`, {
     method: 'POST',
     headers: getAuthHeaders(),
     body: JSON.stringify(data),
@@ -96,7 +114,7 @@ export async function updateFolder(
     color?: string;
   }
 ): Promise<Folder> {
-  const res = await fetch(`${API_BASE}/folders/${id}`, {
+  const res = await apiFetch(`${API_BASE}/folders/${id}`, {
     method: 'PATCH',
     headers: getAuthHeaders(),
     body: JSON.stringify(data),
@@ -106,7 +124,7 @@ export async function updateFolder(
 }
 
 export async function deleteFolder(id: string): Promise<void> {
-  const res = await fetch(`${API_BASE}/folders/${id}`, {
+  const res = await apiFetch(`${API_BASE}/folders/${id}`, {
     method: 'DELETE',
     headers: getAuthHeaders(),
     signal: AbortSignal.timeout(15000),
@@ -135,7 +153,7 @@ export async function fetchReels(
   if (params?.media_type) query.append('media_type', params.media_type);
   if (params?.time) query.append('time', params.time);
 
-  const res = await fetch(`${API_BASE}/reels?${query.toString()}`, {
+  const res = await apiFetch(`${API_BASE}/reels?${query.toString()}`, {
     headers: getAuthHeaders(),
     signal: signal || AbortSignal.timeout(15000),
   });
@@ -147,7 +165,7 @@ export async function analyzeReel(
   folder_id?: string | null,
   media_type?: 'auto' | 'reel' | 'video' | 'image'
 ): Promise<Reel> {
-  const res = await fetch(`${API_BASE}/reels/analyze`, {
+  const res = await apiFetch(`${API_BASE}/reels/analyze`, {
     method: 'POST',
     headers: getAuthHeaders(),
     body: JSON.stringify({ url, folder_id, media_type: media_type || 'auto' }),
@@ -160,13 +178,13 @@ export async function uploadImage(file: File): Promise<{ url: string; filename: 
   const formData = new FormData();
   formData.append('file', file);
 
-  const token = localStorage.getItem('reelmind_token');
+  const token = sessionStorage.getItem('reelmind_token');
   const headers: Record<string, string> = {};
   if (token) {
     headers['Authorization'] = `Bearer ${token}`;
   }
 
-  const res = await fetch(`${API_BASE}/upload-image`, {
+  const res = await apiFetch(`${API_BASE}/upload-image`, {
     method: 'POST',
     headers,
     body: formData,
@@ -187,7 +205,7 @@ export async function updateReel(
     estimated_time?: string;
   }
 ): Promise<Reel> {
-  const res = await fetch(`${API_BASE}/reels/${id}`, {
+  const res = await apiFetch(`${API_BASE}/reels/${id}`, {
     method: 'PATCH',
     headers: getAuthHeaders(),
     body: JSON.stringify(updates),
@@ -197,7 +215,7 @@ export async function updateReel(
 }
 
 export async function deleteReel(id: string): Promise<void> {
-  const res = await fetch(`${API_BASE}/reels/${id}`, {
+  const res = await apiFetch(`${API_BASE}/reels/${id}`, {
     method: 'DELETE',
     headers: getAuthHeaders(),
     signal: AbortSignal.timeout(15000),
@@ -206,7 +224,7 @@ export async function deleteReel(id: string): Promise<void> {
 }
 
 export async function fetchStats(): Promise<Stats> {
-  const res = await fetch(`${API_BASE}/stats`, {
+  const res = await apiFetch(`${API_BASE}/stats`, {
     headers: getAuthHeaders(),
     signal: AbortSignal.timeout(15000),
   });
@@ -214,7 +232,7 @@ export async function fetchStats(): Promise<Stats> {
 }
 
 export async function fetchSettings(): Promise<AppSettings> {
-  const res = await fetch(`${API_BASE}/settings`, {
+  const res = await apiFetch(`${API_BASE}/settings`, {
     headers: getAuthHeaders(),
     signal: AbortSignal.timeout(15000),
   });
@@ -222,7 +240,7 @@ export async function fetchSettings(): Promise<AppSettings> {
 }
 
 export async function saveSettings(geminiApiKey: string): Promise<void> {
-  const res = await fetch(`${API_BASE}/settings`, {
+  const res = await apiFetch(`${API_BASE}/settings`, {
     method: 'POST',
     headers: getAuthHeaders(),
     body: JSON.stringify({ gemini_api_key: geminiApiKey }),
@@ -236,7 +254,7 @@ export async function optimizePrompt(
   mode: 'variations' | 'adapt_model' = 'variations',
   targetModel?: string
 ): Promise<PromptOptimizeResponse> {
-  const res = await fetch(`${API_BASE}/prompts/optimize`, {
+  const res = await apiFetch(`${API_BASE}/prompts/optimize`, {
     method: 'POST',
     headers: getAuthHeaders(),
     body: JSON.stringify({ prompt, mode, target_model: targetModel }),
@@ -246,7 +264,7 @@ export async function optimizePrompt(
 }
 
 export async function askVault(question: string): Promise<VaultAskResponse> {
-  const res = await fetch(`${API_BASE}/vault/ask`, {
+  const res = await apiFetch(`${API_BASE}/vault/ask`, {
     method: 'POST',
     headers: getAuthHeaders(),
     body: JSON.stringify({ question }),
@@ -256,7 +274,7 @@ export async function askVault(question: string): Promise<VaultAskResponse> {
 }
 
 export async function downloadReelMarkdown(id: string, filename?: string): Promise<void> {
-  const res = await fetch(`${API_BASE}/reels/${id}/markdown`, {
+  const res = await apiFetch(`${API_BASE}/reels/${id}/markdown`, {
     headers: getAuthHeaders(),
   });
   if (!res.ok) throw new Error('Error al descargar Markdown del reel');
@@ -272,7 +290,7 @@ export async function downloadReelMarkdown(id: string, filename?: string): Promi
 }
 
 export async function downloadVaultZip(): Promise<void> {
-  const res = await fetch(`${API_BASE}/export/vault`, {
+  const res = await apiFetch(`${API_BASE}/export/vault`, {
     headers: getAuthHeaders(),
   });
   if (!res.ok) throw new Error('Error al descargar archivo ZIP de la bóveda');
