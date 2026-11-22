@@ -1,4 +1,4 @@
-const CACHE_NAME = 'reelmind-v4';
+const CACHE_NAME = 'reelmind-v5';
 
 const STATIC_ASSETS = [
   '/',
