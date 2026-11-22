@@ -17,8 +17,15 @@
 
 <br/>
 
-[✨ Características](#-características-destacadas) • [🏗️ Arquitectura](#-arquitectura-del-sistema) • [🚀 Despliegue](#-guía-de-despliegue) • [🔄 Sincronización con Obsidian](#-integración-con-obsidian) • [🛡️ Seguridad](#-seguridad-y-blindaje-homelab) • [📡 API Reference](#-referencia-de-la-api)
+[✨ Características](#-características-destacadas) • [📸 Capturas](#-capturas-de-pantalla) • [🏗️ Arquitectura](#-arquitectura-del-sistema) • [🧪 Datos Demo](#-datos-de-demostración-seed-data) • [🚀 Despliegue](#-guía-de-despliegue) • [🔄 Sincronización con Obsidian](#-integración-con-obsidian) • [🛡️ Seguridad](#-seguridad-y-blindaje-homelab) • [📡 API Reference](#-referencia-de-la-api)
 
+</div>
+
+---
+
+<div align="center">
+  <img src="docs/screenshots/reelmind-dashboard-demo.png" alt="ReelMind Dashboard — Claude Theme" width="100%" style="border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,0.5);" />
+  <p><em>Panel principal de ReelMind: organización en carpetas, filtrado por modelos/herramientas de IA y tarjetas inteligentes con resumen estructurado.</em></p>
 </div>
 
 ---
@@ -195,6 +202,19 @@ Con un clic en **Exportar Bóveda** (`/api/export/vault`), descargas toda tu col
 
 ---
 
+## 📸 Capturas de Pantalla
+
+<div align="center">
+
+| 📋 Ficha Técnica y Pasos Extraídos con IA | ⚡ Bóveda de Prompts & Cheatsheet Multi-Modelo |
+|:---:|:---:|
+| <img src="docs/screenshots/reelmind-detail-modal-demo.png" alt="ReelMind Detail Modal" width="480" /> | <img src="docs/screenshots/reelmind-prompt-vault-demo.png" alt="ReelMind Prompt Vault" width="480" /> |
+| **Extracción estructurada con Gemini:** herramientas detectadas, resumen ejecutivo, dificultad y guía de ejecución paso a paso. | **Cheatsheet de prompts:** repositorio unificado con búsqueda instantánea, copia en 1 clic y optimizador para distintos LLMs. |
+
+</div>
+
+---
+
 ## 🛡️ Seguridad y Blindaje Homelab
 
 ReelMind está desarrollado bajo estándares de seguridad para despliegues autoalojados expuestos a internet:
@@ -204,6 +224,24 @@ ReelMind está desarrollado bajo estándares de seguridad para despliegues autoa
 - **⏱️ Timeouts Extendidos en Proxy Inverso:** Compatible con Nginx Proxy Manager con directivas de 300 segundos para no cortar inferencias de vídeo densas.
 - **🧼 Sanitización XSS:** Todos los enlaces externos e iframes están fuertemente filtrados y restringidos al protocolo `https://`.
 - **💾 SQLite en Modo WAL:** Modo Write-Ahead Logging (`journal_mode=WAL`) para máxima concurrencia y cero bloqueos de lectura/escritura.
+
+---
+
+## 🧪 Datos de Demostración (Seed Data)
+
+ReelMind incluye un sembrador de datos listo para usar con casos prácticos reales (Bolt.new + Supabase, Midjourney v6 + Kling AI, Agente n8n + Gemini, Claude Code CLI y Flux 1.1 Pro). Permite explorar de inmediato todas las vistas, filtros, carpetas y bóveda de prompts sin necesidad de procesar vídeos primero:
+
+```bash
+# Opción 1: En tu contenedor Docker en producción o local
+docker exec -it reelmind python -m app.seed
+
+# Opción 2: En desarrollo local (utiliza SQLite estándar de Python, sin dependencias extra)
+cd backend
+python app/seed.py
+
+# Opción 3: Restablecer / recrear los datos demo limpios
+python app/seed.py --force
+```
 
 ---
 

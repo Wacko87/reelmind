@@ -1065,8 +1065,12 @@ async def upload_image(file: UploadFile = File(...)):
     }
 
 # Servir frontend estático en producción con encabezados de caché para máximo rendimiento
-frontend_dist = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "frontend", "dist")
-if os.path.exists(frontend_dist):
+candidates = [
+    os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "frontend", "dist"),
+    os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "frontend", "dist")
+]
+frontend_dist = next((c for c in candidates if os.path.exists(c)), None)
+if frontend_dist:
     app.mount("/assets", StaticFiles(directory=os.path.join(frontend_dist, "assets")), name="assets")
 
     @app.get("/{full_path:path}")

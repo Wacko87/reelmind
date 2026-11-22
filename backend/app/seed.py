@@ -1,12 +1,14 @@
+import sys
+import os
 import json
 import uuid
 import datetime
-import aiosqlite
+import argparse
+import sqlite3
 
-try:
-    from .database import DB_PATH, init_db
-except ImportError:
-    from app.database import DB_PATH, init_db
+# Resolver directorio de datos y base de datos sin dependencias externas obligatorias
+DATA_DIR = os.getenv("DATA_DIR", os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "data")))
+DB_PATH = os.path.join(DATA_DIR, "reelmind.db")
 
 DEMO_FOLDERS = [
     {
@@ -24,7 +26,7 @@ DEMO_FOLDERS = [
             },
             {
                 "id": "f_dev_agents",
-                "name": "Agentes Autónomos",
+                "name": "Agentes Autónomos & CLI",
                 "icon": "🤖",
                 "color": "#6366f1"
             }
@@ -92,7 +94,7 @@ DEMO_REELS = [
         "tags": ["programacion", "desarrollo", "web", "productividad"],
         "difficulty": "Principiante",
         "status": "favorite",
-        "user_notes": "Probado y funciona de locos para prototipos rápidos.",
+        "user_notes": "Probado y funciona excelente para prototipos rápidos.",
         "folder_id": "f_dev_prototypes"
     },
     {
@@ -144,46 +146,163 @@ DEMO_REELS = [
         "tags": ["automatizacion", "productividad", "agentes", "n8n"],
         "difficulty": "Avanzado",
         "status": "tested",
-        "user_notes": "Montado en Docker en Unraid, funciona a la perfección.",
+        "user_notes": "Montado en Docker local, funciona a la perfección.",
         "folder_id": "f_auto_n8n"
+    },
+    {
+        "url": "https://www.youtube.com/shorts/example4",
+        "platform": "youtube",
+        "author": "DevAgentLab",
+        "author_url": "https://www.youtube.com/@devagentlab",
+        "original_title": "Cómo convertir tu terminal en un equipo de ingenieros senior con Claude Code",
+        "thumbnail_url": "https://images.unsplash.com/photo-1526374965328-7f61d4dc18c5?w=800&auto=format&fit=crop&q=60",
+        "duration": 52,
+        "title": "Ingeniería de software autónoma con Claude Code CLI",
+        "summary": "Guía práctica para configurar la CLI de Claude Code, vincular herramientas locales y permitir que el agente investigue bugs, edite código y ejecute tests de forma desatendida.",
+        "ai_tools": ["Claude Code", "Anthropic CLI", "Git"],
+        "key_steps": [
+            "Instalar la herramienta oficial via npm install -g @anthropic-ai/claude-code.",
+            "Autenticar con clave de API o suscripción Pro.",
+            "Iniciar una sesión interactiva en la raíz del repositorio con el comando claude.",
+            "Solicitar refactorizaciones complejas especificando que ejecute la suite de tests antes de confirmar cambios."
+        ],
+        "prompts": [
+            "claude 'Investiga los tests fallidos en tests/test_api.py, corrige los edge cases en la validación de URLs y ejecuta pytest para verificar que todos pasen.'"
+        ],
+        "tags": ["programacion", "claude", "cli", "desarrollo", "agentes"],
+        "difficulty": "Intermedio",
+        "status": "favorite",
+        "user_notes": "Imprescindible para agilizar revisiones de código y refactorizaciones.",
+        "folder_id": "f_dev_agents"
+    },
+    {
+        "url": "https://www.instagram.com/reel/example5",
+        "platform": "instagram",
+        "author": "VisualPrompters",
+        "author_url": "https://www.instagram.com/visualprompters",
+        "original_title": "El prompt secreto para conseguir hiperrealismo absoluto en Flux 1.1 Pro",
+        "thumbnail_url": "https://images.unsplash.com/photo-1579783900882-c0d3dad7b119?w=800&auto=format&fit=crop&q=60",
+        "duration": 38,
+        "title": "Fotografía hiperrealista con Flux 1.1 Pro y ComfyUI",
+        "summary": "Técnica para estructurar prompts con iluminación física, aberraciones cromáticas y texturas orgánicas en Flux 1.1 Pro sin el aspecto plástico de otros generadores.",
+        "ai_tools": ["Flux 1.1 Pro", "ComfyUI", "BFL API"],
+        "key_steps": [
+            "Configurar el nodo KSampler en ComfyUI con 28 steps y scheduler Euler simple.",
+            "Evitar palabras comodín cliché como '8k, hyperrealistic' y describir propiedades ópticas reales.",
+            "Definir iluminación volumétrica y grano de película sutil (Kodak Portra 160).",
+            "Aplicar upscale latente x1.5 para microtextura de piel y materiales."
+        ],
+        "prompts": [
+            "street photography candid portrait of an elderly craftsman repairing a mechanical watch, natural morning light streaming through a workshop window, dust motes in air, 85mm f/1.4 lens, shallow depth of field, authentic film grain, high dynamic range --ar 4:5"
+        ],
+        "tags": ["diseño", "fotografia", "flux", "ia-visual", "prompts"],
+        "difficulty": "Intermedio",
+        "status": "pending",
+        "user_notes": "Excelente fórmula para retratos con texturas de piel realistas.",
+        "folder_id": "f_media_images"
     }
 ]
 
-async def seed_data():
-    await init_db()
-    async with aiosqlite.connect(DB_PATH) as db:
+def init_tables_sync(conn: sqlite3.Connection):
+    """Garantiza la creación de las tablas si aún no han sido creadas."""
+    conn.execute("PRAGMA journal_mode=WAL;")
+    conn.execute("PRAGMA foreign_keys=ON;")
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS folders (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            parent_id TEXT,
+            icon TEXT DEFAULT '📁',
+            color TEXT DEFAULT '#8b5cf6',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY (parent_id) REFERENCES folders(id) ON DELETE CASCADE
+        );
+    """)
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS reels (
+            id TEXT PRIMARY KEY,
+            url TEXT UNIQUE NOT NULL,
+            platform TEXT NOT NULL,
+            author TEXT,
+            author_url TEXT,
+            original_title TEXT,
+            thumbnail_url TEXT,
+            duration INTEGER DEFAULT 0,
+            title TEXT NOT NULL,
+            summary TEXT NOT NULL,
+            ai_tools TEXT NOT NULL DEFAULT '[]',
+            key_steps TEXT NOT NULL DEFAULT '[]',
+            prompts TEXT NOT NULL DEFAULT '[]',
+            tags TEXT NOT NULL DEFAULT '[]',
+            difficulty TEXT DEFAULT 'Intermedio',
+            status TEXT DEFAULT 'pending',
+            user_notes TEXT DEFAULT '',
+            folder_id TEXT,
+            media_type TEXT DEFAULT 'reel',
+            images TEXT NOT NULL DEFAULT '[]',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY (folder_id) REFERENCES folders(id) ON DELETE SET NULL
+        );
+    """)
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS app_settings (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        );
+    """)
+
+def seed(force: bool = False, db_path: str = DB_PATH):
+    """Puebla la base de datos SQLite con datos de prueba realistas."""
+    os.makedirs(os.path.dirname(os.path.abspath(db_path)), exist_ok=True)
+    conn = sqlite3.connect(db_path)
+    try:
+        init_tables_sync(conn)
         now = datetime.datetime.now(datetime.timezone.utc).isoformat()
 
+        if force:
+            print("Limpiando datos de demostración anteriores (--force)...")
+            conn.execute("DELETE FROM reels WHERE url LIKE '%example%'")
+            demo_folder_ids = ["f_dev", "f_dev_prototypes", "f_dev_agents", "f_media", "f_media_video", "f_media_images", "f_automation", "f_auto_n8n"]
+            for fid in demo_folder_ids:
+                conn.execute("DELETE FROM folders WHERE id = ?", (fid,))
+            conn.commit()
+
         # Sembrar carpetas si no existen
-        cursor = await db.execute("SELECT COUNT(*) as count FROM folders")
-        row = await cursor.fetchone()
-        if row[0] == 0:
+        cursor = conn.execute("SELECT COUNT(*) FROM folders")
+        folders_count = cursor.fetchone()[0]
+
+        if folders_count == 0 or force:
             for parent in DEMO_FOLDERS:
-                await db.execute(
+                conn.execute(
                     """
-                    INSERT INTO folders (id, name, parent_id, icon, color, created_at, updated_at)
+                    INSERT OR IGNORE INTO folders (id, name, parent_id, icon, color, created_at, updated_at)
                     VALUES (?, ?, ?, ?, ?, ?, ?)
                     """,
                     (parent["id"], parent["name"], None, parent["icon"], parent["color"], now, now)
                 )
                 for sub in parent.get("subfolders", []):
-                    await db.execute(
+                    conn.execute(
                         """
-                        INSERT INTO folders (id, name, parent_id, icon, color, created_at, updated_at)
+                        INSERT OR IGNORE INTO folders (id, name, parent_id, icon, color, created_at, updated_at)
                         VALUES (?, ?, ?, ?, ?, ?, ?)
                         """,
                         (sub["id"], sub["name"], parent["id"], sub["icon"], sub["color"], now, now)
                     )
-            await db.commit()
-            print("Carpetas y subcarpetas sembradas.")
+            conn.commit()
+            print("✓ Carpetas y subcarpetas sembradas.")
 
-        # Sembrar o actualizar reels
-        cursor = await db.execute("SELECT COUNT(*) as count FROM reels")
-        row = await cursor.fetchone()
-        if row[0] == 0:
-            for r in DEMO_REELS:
+        # Sembrar reels demo
+        inserted = 0
+        for r in DEMO_REELS:
+            cursor = conn.execute("SELECT id FROM reels WHERE url = ?", (r["url"],))
+            if not cursor.fetchone():
                 reel_id = str(uuid.uuid4())
-                await db.execute(
+                conn.execute(
                     """
                     INSERT INTO reels (
                         id, url, platform, author, author_url, original_title, thumbnail_url,
@@ -214,15 +333,20 @@ async def seed_data():
                         now,
                     )
                 )
-            await db.commit()
-            print("Reels sembrados con asignación de carpetas.")
+                inserted += 1
+
+        conn.commit()
+        if inserted > 0:
+            print(f"✓ {inserted} reels de demostración añadidos exitosamente en: {db_path}")
         else:
-            # Asignar carpetas a los reels existentes de demostración si estaban en null
-            await db.execute("UPDATE reels SET folder_id = 'f_dev_prototypes' WHERE url LIKE '%example1%' AND folder_id IS NULL")
-            await db.execute("UPDATE reels SET folder_id = 'f_media_video' WHERE url LIKE '%example2%' AND folder_id IS NULL")
-            await db.execute("UPDATE reels SET folder_id = 'f_auto_n8n' WHERE url LIKE '%example3%' AND folder_id IS NULL")
-            await db.commit()
+            print(f"✓ Los datos de demostración ya están presentes en: {db_path}")
+    finally:
+        conn.close()
 
 if __name__ == "__main__":
-    import asyncio
-    asyncio.run(seed_data())
+    parser = argparse.ArgumentParser(description="Poblar ReelMind con datos de demostración")
+    parser.add_argument("--force", action="store_true", help="Recrear datos demo eliminando versiones previas")
+    parser.add_argument("--db", type=str, default=DB_PATH, help="Ruta personalizada al archivo SQLite (reelmind.db)")
+    args = parser.parse_args()
+
+    seed(force=args.force, db_path=args.db)
