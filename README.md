@@ -17,7 +17,7 @@
 
 <br/>
 
-[🌐 Demo en Producción](https://reels.wacko87.es) • [✨ Características](#-características-destacadas) • [🏗️ Arquitectura](#-arquitectura-del-sistema) • [🚀 Despliegue](#-guía-de-despliegue) • [🔄 Sincronización con Obsidian](#-integración-con-obsidian) • [🛡️ Seguridad](#-seguridad-y-blindaje-homelab) • [📡 API Reference](#-referencia-de-la-api)
+[✨ Características](#-características-destacadas) • [🏗️ Arquitectura](#-arquitectura-del-sistema) • [🚀 Despliegue](#-guía-de-despliegue) • [🔄 Sincronización con Obsidian](#-integración-con-obsidian) • [🛡️ Seguridad](#-seguridad-y-blindaje-homelab) • [📡 API Reference](#-referencia-de-la-api)
 
 </div>
 

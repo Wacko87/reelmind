@@ -23,6 +23,8 @@ data/temp/*
 .env
 .env.*
 !.env.example
+*.local.sh
+.env.deploy
 
 # Node & Frontend
 node_modules/

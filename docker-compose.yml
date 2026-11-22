@@ -11,16 +11,10 @@ services:
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
       - GEMINI_MODEL=${GEMINI_MODEL:-gemini-3.5-flash-lite}
       - AUTH_PIN=${AUTH_PIN:-}
+    ports:
+      - "8000:8000"
     volumes:
       - ./data:/data
-    networks:
-      br0.11:
-        ipv4_address: 192.168.11.237
     labels:
       net.unraid.docker.managed: "dockerman"
       net.unraid.docker.webui: "http://[IP]:[PORT:8000]"
-
-networks:
-  br0.11:
-    name: br0.11
-    external: true

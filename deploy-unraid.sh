@@ -1,11 +1,16 @@
 #!/usr/bin/env bash
 set -e
 
-UNRAID_HOST="192.168.7.160"
-UNRAID_USER="root"
+# Cargar configuración personalizada si existe localmente (ignorado en git)
+if [ -f "$LOCAL_DIR/.env.deploy" ]; then
+  # shellcheck source=/dev/null
+  source "$LOCAL_DIR/.env.deploy"
+fi
+
+UNRAID_HOST="${UNRAID_HOST:-tu-servidor-unraid}"
+UNRAID_USER="${UNRAID_USER:-root}"
 # Importante: Usar /mnt/cache directo en lugar de /mnt/user (FUSE) para SQLite WAL de alto rendimiento y evitar bloqueos shm
-REMOTE_DIR="/mnt/cache/appdata/reelmind"
-LOCAL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REMOTE_DIR="${REMOTE_DIR:-/mnt/cache/appdata/reelmind}"
 
 echo "🚀 Desplegando ReelMind en Unraid ($UNRAID_HOST)..."
 
@@ -35,5 +40,5 @@ echo "🐳 Levantando contenedor Docker en Unraid..."
 ssh "$UNRAID_USER@$UNRAID_HOST" "cd $REMOTE_DIR && docker compose up -d --build"
 
 echo "✅ Despliegue completado con éxito."
-echo "🌐 ReelMind está disponible en red br0.11: http://192.168.11.237:8000"
-echo "🔒 Proxy Host en Nginx Proxy Manager: https://reels.wacko87.es (o https://reelmind.wacko87.es)"
+echo "🌐 ReelMind está disponible en: http://$UNRAID_HOST:8000"
+echo "🔒 Configura tu Proxy Host en Nginx Proxy Manager apuntando a http://$UNRAID_HOST:8000"
