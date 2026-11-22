@@ -102,7 +102,7 @@ export const ReelCard: React.FC<ReelCardProps> = React.memo(({
         )}
 
         {/* Badges superiores */}
-        <div className="absolute top-2.5 left-2.5 flex items-center gap-1.5 z-10 flex-wrap max-w-[70%]">
+        <div className="absolute top-2.5 left-2.5 flex items-center gap-1.5 z-10 flex-wrap max-w-[calc(100%-76px)] pointer-events-none">
           {isImage ? (
             <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-500/30 text-emerald-200 border border-emerald-400/30 shadow-sm backdrop-blur-md flex items-center gap-1">
               <ImageIcon className="w-2.5 h-2.5" />

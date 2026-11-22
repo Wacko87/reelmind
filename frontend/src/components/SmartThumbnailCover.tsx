@@ -129,7 +129,7 @@ export const SmartThumbnailCover: React.FC<SmartThumbnailCoverProps> = ({ reel, 
 
   return (
     <div 
-      className={`relative w-full h-full overflow-hidden select-none bg-gradient-to-br ${theme.gradient} flex flex-col justify-between p-3.5 sm:p-4 text-left transition-all ${className}`}
+      className={`relative w-full h-full overflow-hidden select-none bg-gradient-to-br ${theme.gradient} flex flex-col justify-between pt-11 pb-2.5 px-3.5 sm:px-4 text-left transition-all ${className}`}
     >
       {/* Resplandor ambiental de fondo */}
       <div 
@@ -159,36 +159,6 @@ export const SmartThumbnailCover: React.FC<SmartThumbnailCoverProps> = ({ reel, 
         <rect width="100%" height="100%" fill="url(#card-grid)" />
       </svg>
 
-      {/* Fila Superior: Herramienta Principal y Badges de Impacto */}
-      <div className="relative z-10 flex items-center justify-between gap-2">
-        <div 
-          className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-mono font-medium shadow-sm backdrop-blur-md border"
-          style={{ 
-            backgroundColor: 'rgba(0, 0, 0, 0.45)', 
-            borderColor: theme.borderColor,
-            color: theme.accentColor
-          }}
-        >
-          {theme.icon}
-          <span className="font-semibold truncate max-w-[140px]">
-            {primaryTool || theme.category}
-          </span>
-        </div>
-
-        {/* Indicador de Prompt o Tiempo */}
-        {hasPrompts ? (
-          <div className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-mono font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shadow-sm backdrop-blur-md">
-            <Terminal className="w-2.5 h-2.5" />
-            <span>{reel.prompts.length} prompt{reel.prompts.length > 1 ? 's' : ''}</span>
-          </div>
-        ) : reel.estimated_time ? (
-          <div className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-mono text-white/70 bg-black/40 border border-white/10 backdrop-blur-md">
-            <Clock className="w-2.5 h-2.5 text-white/60" />
-            <span>{reel.estimated_time}</span>
-          </div>
-        ) : null}
-      </div>
-
       {/* Centro: Título Destacado de lo que se enseña */}
       <div className="relative z-10 my-auto py-1">
         <h4 className="text-sm sm:text-base font-serif font-semibold text-white leading-snug line-clamp-2 drop-shadow-md tracking-tight">
@@ -205,17 +175,43 @@ export const SmartThumbnailCover: React.FC<SmartThumbnailCoverProps> = ({ reel, 
         </p>
       </div>
 
-      {/* Fila Inferior: Categoría y Dificultad */}
-      <div className="relative z-10 flex items-center justify-between text-[10px] font-sans text-white/60 pt-1 border-t border-white/10">
-        <span className="font-mono text-white/50 truncate max-w-[160px]">
-          {theme.category}
-        </span>
-
-        {reel.difficulty && (
-          <span className="px-1.5 py-0.5 rounded bg-white/10 text-white/80 font-medium">
-            {reel.difficulty}
+      {/* Fila Inferior: Herramienta de IA, Prompts y Dificultad */}
+      <div className="relative z-10 flex items-center justify-between gap-1.5 text-[10px] pt-1.5 border-t border-white/10">
+        {/* Herramienta principal o categoría destacada */}
+        <div 
+          className="flex items-center gap-1.5 px-2 py-0.5 rounded-full font-mono font-medium shadow-sm border truncate max-w-[150px]"
+          style={{ 
+            backgroundColor: 'rgba(0, 0, 0, 0.45)', 
+            borderColor: theme.borderColor,
+            color: theme.accentColor
+          }}
+        >
+          {theme.icon}
+          <span className="font-semibold truncate">
+            {primaryTool || theme.category}
           </span>
-        )}
+        </div>
+
+        {/* Badges de soporte (prompts o tiempo + dificultad) */}
+        <div className="flex items-center gap-1 flex-shrink-0">
+          {hasPrompts ? (
+            <div className="flex items-center gap-1 px-1.5 py-0.5 rounded-full font-mono font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shadow-sm backdrop-blur-md">
+              <Terminal className="w-2.5 h-2.5" />
+              <span>{reel.prompts.length} prompt{reel.prompts.length > 1 ? 's' : ''}</span>
+            </div>
+          ) : reel.estimated_time ? (
+            <div className="flex items-center gap-1 px-1.5 py-0.5 rounded-full font-mono text-white/70 bg-black/40 border border-white/10 backdrop-blur-md">
+              <Clock className="w-2.5 h-2.5 text-white/60" />
+              <span>{reel.estimated_time}</span>
+            </div>
+          ) : null}
+
+          {reel.difficulty && (
+            <span className="px-1.5 py-0.5 rounded bg-white/10 text-white/80 font-medium font-sans">
+              {reel.difficulty}
+            </span>
+          )}
+        </div>
       </div>
 
     </div>
