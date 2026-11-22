@@ -9,7 +9,7 @@ services:
       - PORT=8000
       - DATA_DIR=/data
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
-      - GEMINI_MODEL=${GEMINI_MODEL:-gemini-2.5-flash}
+      - GEMINI_MODEL=${GEMINI_MODEL:-gemini-3.5-flash-lite}
       - AUTH_PIN=${AUTH_PIN:-}
     volumes:
       - ./data:/data
