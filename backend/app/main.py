@@ -61,20 +61,14 @@ app = FastAPI(title="ReelMind API", version="1.4.0")
 # Compresión automática de respuestas HTTP (>1KB) para menor latencia en móvil
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
-# Orígenes autorizados estrictos para CORS (eliminando comodín permisivo '*')
-ALLOWED_ORIGINS = [
-    "https://reels.wacko87.es",
-    "http://192.168.11.237:8000",
-    "http://192.168.7.160:8000",
-    "http://localhost:5173",
-    "http://localhost:8000",
-    "http://127.0.0.1:5173",
-    "http://127.0.0.1:8000",
-]
+# Orígenes autorizados para CORS (soporta dominios configurados o cualquier host HTTP/HTTPS en despliegues self-hosted)
+raw_origins = os.getenv("ALLOWED_ORIGINS", "")
+ALLOWED_ORIGINS = [o.strip() for o in raw_origins.split(",") if o.strip()] if raw_origins else ["http://localhost:5173", "http://localhost:8000"]
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
+    allow_origin_regex=r"^https?://.*$",
     allow_credentials=True,
     allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type", "Accept", "X-Service-Key"],

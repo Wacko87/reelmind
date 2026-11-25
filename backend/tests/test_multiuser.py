@@ -5,7 +5,9 @@ import tempfile
 import aiosqlite
 from httpx import AsyncClient, ASGITransport
 
-sys.path.insert(0, '/Users/wacko87/Desktop/Proyectos Creacion de APPs/reelmind/backend')
+backend_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if backend_root not in sys.path:
+    sys.path.insert(0, backend_root)
 
 test_db_dir = tempfile.mkdtemp()
 test_db_path = os.path.join(test_db_dir, "test_reelmind.db")

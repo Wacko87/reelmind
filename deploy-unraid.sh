@@ -46,5 +46,5 @@ echo "🐳 Levantando contenedor Docker en Unraid..."
 ssh "$UNRAID_USER@$UNRAID_HOST" "cd $REMOTE_DIR && docker compose up -d --build"
 
 echo "✅ Despliegue completado con éxito."
-echo "🌐 ReelMind está disponible en: http://192.168.11.237:8000"
-echo "🔒 Proxy Host en Nginx Proxy Manager: https://reels.wacko87.es"
+echo "🌐 ReelMind está disponible en el puerto configurado (ej: http://tu-servidor:8000)"
+echo "🔒 Configura tu Proxy Host en Nginx Proxy Manager o tu reverse proxy preferido."
