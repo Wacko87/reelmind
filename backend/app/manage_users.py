@@ -155,9 +155,43 @@ async def list_orgs():
     finally:
         await db.close()
 
+async def add_org_member(org_name_or_slug: str, username: str, role: str = "member"):
+    await init_db()
+    db = await get_connection()
+    try:
+        cursor_o = await db.execute(
+            "SELECT id, name FROM organizations WHERE slug = ? OR LOWER(name) = ?;",
+            (org_name_or_slug.lower(), org_name_or_slug.lower())
+        )
+        org = await cursor_o.fetchone()
+        if not org:
+            print(f"❌ Error: Organización '{org_name_or_slug}' no encontrada.")
+            sys.exit(1)
+
+        cursor_u = await db.execute("SELECT id, username FROM users WHERE LOWER(username) = ?;", (username.lower(),))
+        user = await cursor_u.fetchone()
+        if not user:
+            print(f"❌ Error: Usuario '{username}' no encontrado.")
+            sys.exit(1)
+
+        cursor_m = await db.execute("SELECT id FROM organization_members WHERE org_id = ? AND user_id = ?;", (org["id"], user["id"]))
+        if await cursor_m.fetchone():
+            print(f"⚠️ El usuario '{username}' ya es miembro de '{org['name']}'.")
+            return
+
+        now = datetime.now(timezone.utc).isoformat()
+        await db.execute(
+            "INSERT INTO organization_members (id, org_id, user_id, role, created_at) VALUES (?, ?, ?, ?, ?);",
+            (str(uuid.uuid4()), org["id"], user["id"], role, now)
+        )
+        await db.commit()
+        print(f"✅ Usuario '{user['username']}' añadido a la organización '{org['name']}' con rol '{role}'.")
+    finally:
+        await db.close()
+
 def main():
     if len(sys.argv) < 2:
-        print("Uso: python3 -m app.manage_users [list | list-orgs | add <user> <pin> [--admin] | delete <user> | set-pin <user> <pin>]")
+        print("Uso: python3 -m app.manage_users [list | list-orgs | add <user> <pin> [--admin] | delete <user> | set-pin <user> <pin> | add-member <org> <user> [--admin]]")
         sys.exit(1)
 
     cmd = sys.argv[1].lower()
@@ -173,6 +207,14 @@ def main():
         pin = sys.argv[3]
         is_admin = "--admin" in sys.argv
         asyncio.run(add_user(username, pin, is_admin))
+    elif cmd == "add-member":
+        if len(sys.argv) < 4:
+            print("Uso: python3 -m app.manage_users add-member <org> <username> [--admin]")
+            sys.exit(1)
+        org = sys.argv[2]
+        username = sys.argv[3]
+        role = "admin" if "--admin" in sys.argv else "member"
+        asyncio.run(add_org_member(org, username, role))
     elif cmd == "delete":
         if len(sys.argv) < 3:
             print("Uso: python3 -m app.manage_users delete <username>")
