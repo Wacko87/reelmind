@@ -33,9 +33,15 @@ from .schemas import (
     FolderItem,
     LoginRequest,
     LoginResponse,
+    RegisterRequest,
     AuthStatusResponse,
     UserCreate,
     UserResponse,
+    OrganizationCreate,
+    OrganizationUpdate,
+    OrganizationMemberAdd,
+    OrganizationMemberResponse,
+    OrganizationResponse,
     PromptOptimizeRequest,
     PromptOptimizeResponse,
     VaultAskRequest,
@@ -181,6 +187,7 @@ def format_reel_row(row: aiosqlite.Row) -> dict:
         "user_notes": row_dict.get("user_notes") or "",
         "folder_id": row_dict.get("folder_id"),
         "folder_name": row_dict.get("folder_name"),
+        "org_id": row_dict.get("org_id"),
         "media_type": row_dict.get("media_type") or "reel",
         "images": safe_json_loads(row_dict.get("images")),
         "is_duplicate": False,
@@ -293,6 +300,22 @@ async def fetch_reel_by_id(db: aiosqlite.Connection, reel_id: str, user_id: Opti
     row = await cursor.fetchone()
     return format_reel_row(row) if row else None
 
+async def fetch_reel_accessible_by_user(db: aiosqlite.Connection, reel_id: str, user_id: str, is_admin: bool = False) -> Optional[dict]:
+    """Recupera un reel si pertenece al usuario o a una organización a la que pertenece."""
+    cursor = await db.execute(f"{BASE_REEL_SELECT} WHERE r.id = ?", (reel_id,))
+    row = await cursor.fetchone()
+    if not row:
+        return None
+    r_dict = dict(row)
+    if is_admin or r_dict.get("user_id") == user_id:
+        return format_reel_row(row)
+    org_id = r_dict.get("org_id")
+    if org_id:
+        cursor_m = await db.execute("SELECT 1 FROM organization_members WHERE org_id = ? AND user_id = ?", (org_id, user_id))
+        if await cursor_m.fetchone():
+            return format_reel_row(row)
+    return None
+
 # ==========================================
 # RUTAS DE AUTENTICACIÓN Y MULTI-USUARIO
 # ==========================================
@@ -392,6 +415,58 @@ async def login(data: LoginRequest, request: Request, response: Response, db: ai
         "is_admin": is_admin
     }
 
+@app.post("/api/auth/register", response_model=LoginResponse)
+async def register(data: RegisterRequest, request: Request, response: Response, db: aiosqlite.Connection = Depends(get_db)):
+    """Permite el auto-registro directo de nuevos usuarios desde la app móvil o web."""
+    clean_user = data.username.strip().lower()
+    clean_pin = data.pin.strip()
+
+    if len(clean_user) < 2 or len(clean_user) > 30:
+        raise HTTPException(status_code=400, detail="El nombre de usuario debe tener entre 2 y 30 caracteres.")
+    
+    if not re.match(r"^[a-z0-9_-]+$", clean_user):
+        raise HTTPException(status_code=400, detail="El usuario solo puede contener letras minúsculas, números, guiones y guiones bajos.")
+
+    if len(clean_pin) < 4:
+        raise HTTPException(status_code=400, detail="El PIN o contraseña debe tener al menos 4 caracteres.")
+
+    # Comprobar unicidad de nombre de usuario
+    cursor = await db.execute("SELECT id FROM users WHERE LOWER(username) = ?;", (clean_user,))
+    if await cursor.fetchone():
+        raise HTTPException(status_code=400, detail=f"El nombre de usuario '{clean_user}' ya está en uso.")
+
+    user_id = str(uuid.uuid4())
+    now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    hashed = hash_pin(clean_pin)
+
+    await db.execute(
+        "INSERT INTO users (id, username, pin_hash, is_admin, created_at, updated_at) VALUES (?, ?, ?, 0, ?, ?);",
+        (user_id, clean_user, hashed, now, now)
+    )
+    await db.commit()
+
+    token = create_auth_token(
+        user_id=user_id,
+        username=clean_user,
+        is_admin=False
+    )
+    is_secure = request.url.scheme == "https" or request.headers.get("x-forwarded-proto") == "https"
+    response.set_cookie(
+        key="reelmind_auth",
+        value=token,
+        max_age=TOKEN_EXPIRATION_SECONDS,
+        httponly=True,
+        samesite="lax",
+        secure=is_secure
+    )
+    return {
+        "success": True,
+        "token": token,
+        "message": f"Usuario '{clean_user}' creado exitosamente",
+        "username": clean_user,
+        "is_admin": False
+    }
+
 @app.post("/api/auth/logout")
 async def logout(response: Response):
     response.delete_cookie(key="reelmind_auth")
@@ -458,19 +533,315 @@ async def delete_user_route(target_id: str, current_user: CurrentUser = Depends(
     return {"success": True, "message": f"Usuario {target_id} y sus datos eliminados con éxito."}
 
 # ==========================================
+# RUTAS DE ORGANIZACIONES (ESTILO GITHUB)
+# ==========================================
+
+async def get_user_org_role(db: aiosqlite.Connection, user_id: str, org_id: str) -> Optional[str]:
+    cursor = await db.execute("SELECT role FROM organization_members WHERE org_id = ? AND user_id = ?", (org_id, user_id))
+    row = await cursor.fetchone()
+    return row["role"] if row else None
+
+@app.get("/api/orgs", response_model=List[OrganizationResponse])
+async def list_user_organizations(
+    current_user: CurrentUser = Depends(require_auth),
+    db: aiosqlite.Connection = Depends(get_db)
+):
+    """Lista todas las organizaciones a las que pertenece el usuario actual."""
+    cursor = await db.execute("""
+        SELECT 
+            o.id, o.name, o.slug, o.description, o.owner_id, o.created_at, o.updated_at,
+            u.username as owner_username,
+            om.role as user_role,
+            (SELECT COUNT(*) FROM organization_members WHERE org_id = o.id) as members_count,
+            (SELECT COUNT(*) FROM reels WHERE org_id = o.id) as reels_count
+        FROM organizations o
+        JOIN organization_members om ON om.org_id = o.id
+        LEFT JOIN users u ON u.id = o.owner_id
+        WHERE om.user_id = ?
+        ORDER BY o.name ASC;
+    """, (current_user.id,))
+    rows = await cursor.fetchall()
+    return [
+        {
+            "id": r["id"],
+            "name": r["name"],
+            "slug": r["slug"],
+            "description": r["description"] or "",
+            "owner_id": r["owner_id"],
+            "owner_username": r["owner_username"],
+            "role": r["user_role"],
+            "members_count": r["members_count"],
+            "reels_count": r["reels_count"],
+            "created_at": r["created_at"],
+            "updated_at": r["updated_at"]
+        }
+        for r in rows
+    ]
+
+@app.post("/api/orgs", response_model=OrganizationResponse)
+async def create_organization(
+    data: OrganizationCreate,
+    current_user: CurrentUser = Depends(require_auth),
+    db: aiosqlite.Connection = Depends(get_db)
+):
+    clean_name = data.name.strip()
+    base_slug = re.sub(r'[^a-z0-9]+', '-', clean_name.lower()).strip('-')
+    if not base_slug:
+        base_slug = "org"
+    slug = base_slug
+
+    counter = 1
+    while True:
+        cursor = await db.execute("SELECT id FROM organizations WHERE slug = ?", (slug,))
+        if not await cursor.fetchone():
+            break
+        slug = f"{base_slug}-{counter}"
+        counter += 1
+
+    org_id = str(uuid.uuid4())
+    member_id = str(uuid.uuid4())
+    now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+    await db.execute(
+        """
+        INSERT INTO organizations (id, name, slug, description, owner_id, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?);
+        """,
+        (org_id, clean_name, slug, data.description or "", current_user.id, now, now)
+    )
+
+    await db.execute(
+        """
+        INSERT INTO organization_members (id, org_id, user_id, role, created_at)
+        VALUES (?, ?, ?, 'owner', ?);
+        """,
+        (member_id, org_id, current_user.id, now)
+    )
+    await db.commit()
+
+    return {
+        "id": org_id,
+        "name": clean_name,
+        "slug": slug,
+        "description": data.description or "",
+        "owner_id": current_user.id,
+        "owner_username": current_user.username,
+        "role": "owner",
+        "members_count": 1,
+        "reels_count": 0,
+        "created_at": now,
+        "updated_at": now
+    }
+
+@app.get("/api/orgs/{org_id}")
+async def get_organization_detail(
+    org_id: str,
+    current_user: CurrentUser = Depends(require_auth),
+    db: aiosqlite.Connection = Depends(get_db)
+):
+    role = await get_user_org_role(db, current_user.id, org_id)
+    if not role and not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="No perteneces a esta organización.")
+
+    cursor = await db.execute("""
+        SELECT o.*, u.username as owner_username,
+               (SELECT COUNT(*) FROM reels WHERE org_id = o.id) as reels_count
+        FROM organizations o
+        LEFT JOIN users u ON u.id = o.owner_id
+        WHERE o.id = ?;
+    """, (org_id,))
+    org = await cursor.fetchone()
+    if not org:
+        raise HTTPException(status_code=404, detail="Organización no encontrada.")
+
+    cursor_members = await db.execute("""
+        SELECT om.user_id, u.username, om.role, om.created_at as joined_at
+        FROM organization_members om
+        JOIN users u ON u.id = om.user_id
+        WHERE om.org_id = ?
+        ORDER BY (om.role = 'owner') DESC, (om.role = 'admin') DESC, u.username ASC;
+    """, (org_id,))
+    members = [dict(r) for r in await cursor_members.fetchall()]
+
+    return {
+        "id": org["id"],
+        "name": org["name"],
+        "slug": org["slug"],
+        "description": org["description"] or "",
+        "owner_id": org["owner_id"],
+        "owner_username": org["owner_username"],
+        "role": role,
+        "members_count": len(members),
+        "reels_count": org["reels_count"],
+        "members": members,
+        "created_at": org["created_at"],
+        "updated_at": org["updated_at"]
+    }
+
+@app.put("/api/orgs/{org_id}", response_model=OrganizationResponse)
+async def update_organization(
+    org_id: str,
+    data: OrganizationUpdate,
+    current_user: CurrentUser = Depends(require_auth),
+    db: aiosqlite.Connection = Depends(get_db)
+):
+    role = await get_user_org_role(db, current_user.id, org_id)
+    if role not in ("owner", "admin") and not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Solo el owner o admin pueden modificar la organización.")
+
+    updates = []
+    params = []
+    if data.name is not None and data.name.strip():
+        updates.append("name = ?")
+        params.append(data.name.strip())
+    if data.description is not None:
+        updates.append("description = ?")
+        params.append(data.description.strip())
+
+    if updates:
+        now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        updates.append("updated_at = ?")
+        params.append(now)
+        params.append(org_id)
+        await db.execute(f"UPDATE organizations SET {', '.join(updates)} WHERE id = ?", params)
+        await db.commit()
+
+    cursor = await db.execute("""
+        SELECT o.*, u.username as owner_username,
+               (SELECT COUNT(*) FROM organization_members WHERE org_id = o.id) as members_count,
+               (SELECT COUNT(*) FROM reels WHERE org_id = o.id) as reels_count
+        FROM organizations o
+        LEFT JOIN users u ON u.id = o.owner_id
+        WHERE o.id = ?;
+    """, (org_id,))
+    org = await cursor.fetchone()
+    if not org:
+        raise HTTPException(status_code=404, detail="Organización no encontrada.")
+
+    return {
+        "id": org["id"],
+        "name": org["name"],
+        "slug": org["slug"],
+        "description": org["description"] or "",
+        "owner_id": org["owner_id"],
+        "owner_username": org["owner_username"],
+        "role": role,
+        "members_count": org["members_count"],
+        "reels_count": org["reels_count"],
+        "created_at": org["created_at"],
+        "updated_at": org["updated_at"]
+    }
+
+@app.delete("/api/orgs/{org_id}")
+async def delete_organization(
+    org_id: str,
+    current_user: CurrentUser = Depends(require_auth),
+    db: aiosqlite.Connection = Depends(get_db)
+):
+    role = await get_user_org_role(db, current_user.id, org_id)
+    if role != "owner" and not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Solo el propietario ('owner') puede eliminar la organización.")
+
+    await db.execute("DELETE FROM reels WHERE org_id = ?", (org_id,))
+    await db.execute("DELETE FROM folders WHERE org_id = ?", (org_id,))
+    await db.execute("DELETE FROM organization_members WHERE org_id = ?", (org_id,))
+    await db.execute("DELETE FROM organizations WHERE id = ?", (org_id,))
+    await db.commit()
+    return {"success": True, "message": "Organización y sus recursos eliminados con éxito."}
+
+@app.post("/api/orgs/{org_id}/members", response_model=OrganizationMemberResponse)
+async def add_organization_member(
+    org_id: str,
+    data: OrganizationMemberAdd,
+    current_user: CurrentUser = Depends(require_auth),
+    db: aiosqlite.Connection = Depends(get_db)
+):
+    role = await get_user_org_role(db, current_user.id, org_id)
+    if role not in ("owner", "admin") and not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Solo el propietario o administradores pueden invitar miembros.")
+
+    target_username = data.username.strip().lower()
+    cursor_u = await db.execute("SELECT id, username FROM users WHERE LOWER(username) = ?", (target_username,))
+    target_user = await cursor_u.fetchone()
+    if not target_user:
+        raise HTTPException(status_code=404, detail=f"No se encontró ningún usuario con el nombre '{target_username}'.")
+
+    target_id = target_user["id"]
+    cursor_m = await db.execute("SELECT id FROM organization_members WHERE org_id = ? AND user_id = ?", (org_id, target_id))
+    if await cursor_m.fetchone():
+        raise HTTPException(status_code=400, detail=f"El usuario '{target_username}' ya es miembro de esta organización.")
+
+    now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    member_role = data.role if data.role in ("admin", "member") else "member"
+    await db.execute(
+        "INSERT INTO organization_members (id, org_id, user_id, role, created_at) VALUES (?, ?, ?, ?, ?);",
+        (str(uuid.uuid4()), org_id, target_id, member_role, now)
+    )
+    await db.commit()
+
+    return {
+        "user_id": target_id,
+        "username": target_user["username"],
+        "role": member_role,
+        "joined_at": now
+    }
+
+@app.delete("/api/orgs/{org_id}/members/{target_user_id}")
+async def remove_organization_member(
+    org_id: str,
+    target_user_id: str,
+    current_user: CurrentUser = Depends(require_auth),
+    db: aiosqlite.Connection = Depends(get_db)
+):
+    current_role = await get_user_org_role(db, current_user.id, org_id)
+    if not current_role and not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="No perteneces a esta organización.")
+
+    is_self = (target_user_id == current_user.id)
+    if not is_self and current_role not in ("owner", "admin") and not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Solo el owner o admin pueden expulsar miembros.")
+
+    cursor_target = await db.execute("SELECT role FROM organization_members WHERE org_id = ? AND user_id = ?", (org_id, target_user_id))
+    target_row = await cursor_target.fetchone()
+    if not target_row:
+        raise HTTPException(status_code=404, detail="El usuario no es miembro de esta organización.")
+
+    if target_row["role"] == "owner" and is_self:
+        cursor_owners = await db.execute("SELECT COUNT(*) FROM organization_members WHERE org_id = ? AND role = 'owner'", (org_id,))
+        count = (await cursor_owners.fetchone())[0]
+        if count <= 1:
+            raise HTTPException(status_code=400, detail="Como único propietario, no puedes salirte sin transferir la organización o eliminarla.")
+
+    await db.execute("DELETE FROM organization_members WHERE org_id = ? AND user_id = ?", (org_id, target_user_id))
+    await db.commit()
+    return {"success": True, "message": "Miembro removido con éxito."}
+
+# ==========================================
 # RUTAS DE CARPETAS Y SUBCARPETAS
 # ==========================================
 
-async def get_folder_subtree_ids(db: aiosqlite.Connection, parent_id: str, user_id: Optional[str] = None) -> List[str]:
+async def get_folder_subtree_ids(db: aiosqlite.Connection, parent_id: str, user_id: Optional[str] = None, org_id: Optional[str] = None) -> List[str]:
     """Obtiene el ID de la carpeta y todas sus subcarpetas descendientes en 1 sola consulta SQL recursiva nativa."""
-    if user_id:
+    if org_id:
         query = """
         WITH RECURSIVE subtree(id) AS (
-            SELECT id FROM folders WHERE id = ? AND user_id = ?
+            SELECT id FROM folders WHERE id = ? AND org_id = ?
             UNION ALL
             SELECT f.id FROM folders f
             JOIN subtree s ON f.parent_id = s.id
-            WHERE f.user_id = ?
+            WHERE f.org_id = ?
+        )
+        SELECT id FROM subtree;
+        """
+        cursor = await db.execute(query, (parent_id, org_id, org_id))
+    elif user_id:
+        query = """
+        WITH RECURSIVE subtree(id) AS (
+            SELECT id FROM folders WHERE id = ? AND user_id = ? AND (org_id IS NULL OR org_id = '')
+            UNION ALL
+            SELECT f.id FROM folders f
+            JOIN subtree s ON f.parent_id = s.id
+            WHERE f.user_id = ? AND (f.org_id IS NULL OR f.org_id = '')
         )
         SELECT id FROM subtree;
         """
@@ -492,31 +863,40 @@ async def get_folder_subtree_ids(db: aiosqlite.Connection, parent_id: str, user_
 @app.get("/api/folders", response_model=List[FolderItem])
 async def list_folders(
     media_type: Optional[str] = Query(None, description="Filtrar contadores por tipo ('reel' o 'video')"),
+    org_id: Optional[str] = Query(None, description="ID de organización si se consulta una bóveda compartida"),
     current_user: CurrentUser = Depends(require_auth),
     db: aiosqlite.Connection = Depends(get_db)
 ):
-    cursor = await db.execute("SELECT * FROM folders WHERE user_id = ? ORDER BY name ASC", (current_user.id,))
-    rows = await cursor.fetchall()
-    
+    if org_id and org_id.strip():
+        role = await get_user_org_role(db, current_user.id, org_id)
+        if not role and not current_user.is_admin:
+            raise HTTPException(status_code=403, detail="No perteneces a esta organización.")
+        cursor = await db.execute("SELECT * FROM folders WHERE org_id = ? ORDER BY name ASC", (org_id,))
+        rows = await cursor.fetchall()
+        count_base = "SELECT folder_id, COUNT(*) as count FROM reels WHERE org_id = ? AND folder_id IS NOT NULL"
+        count_params = [org_id]
+    else:
+        cursor = await db.execute("SELECT * FROM folders WHERE user_id = ? AND (org_id IS NULL OR org_id = '') ORDER BY name ASC", (current_user.id,))
+        rows = await cursor.fetchall()
+        count_base = "SELECT folder_id, COUNT(*) as count FROM reels WHERE user_id = ? AND (org_id IS NULL OR org_id = '') AND folder_id IS NOT NULL"
+        count_params = [current_user.id]
+
     if media_type:
         if media_type == 'reel':
-            cursor_counts = await db.execute(
-                "SELECT folder_id, COUNT(*) as count FROM reels WHERE user_id = ? AND folder_id IS NOT NULL AND (media_type = 'reel' OR media_type IS NULL) GROUP BY folder_id",
-                (current_user.id,)
-            )
+            count_base += " AND (media_type = 'reel' OR media_type IS NULL)"
         else:
-            cursor_counts = await db.execute(
-                "SELECT folder_id, COUNT(*) as count FROM reels WHERE user_id = ? AND folder_id IS NOT NULL AND media_type = ? GROUP BY folder_id",
-                (current_user.id, media_type)
-            )
-    else:
-        cursor_counts = await db.execute("SELECT folder_id, COUNT(*) as count FROM reels WHERE user_id = ? AND folder_id IS NOT NULL GROUP BY folder_id", (current_user.id,))
+            count_base += " AND media_type = ?"
+            count_params.append(media_type)
+    count_base += " GROUP BY folder_id"
+
+    cursor_counts = await db.execute(count_base, count_params)
     counts_map = {r["folder_id"]: r["count"] for r in await cursor_counts.fetchall()}
 
     folder_map: Dict[str, dict] = {}
     for r in rows:
         fid = r["id"]
         direct_count = counts_map.get(fid, 0)
+        r_dict = dict(r)
         folder_map[fid] = {
             "id": fid,
             "name": r["name"],
@@ -525,6 +905,7 @@ async def list_folders(
             "color": r["color"] or "#8b5cf6",
             "reel_count": direct_count,
             "total_reel_count": direct_count,
+            "org_id": r_dict.get("org_id"),
             "children": [],
             "created_at": r["created_at"],
             "updated_at": r["updated_at"],
@@ -556,10 +937,20 @@ async def create_folder(
     current_user: CurrentUser = Depends(require_auth),
     db: aiosqlite.Connection = Depends(get_db)
 ):
-    if data.parent_id:
-        cursor = await db.execute("SELECT id FROM folders WHERE id = ? AND user_id = ?", (data.parent_id, current_user.id))
-        if not await cursor.fetchone():
-            raise HTTPException(status_code=400, detail="La carpeta padre no existe.")
+    target_org = data.org_id.strip() if data.org_id and data.org_id.strip() else None
+    if target_org:
+        role = await get_user_org_role(db, current_user.id, target_org)
+        if not role and not current_user.is_admin:
+            raise HTTPException(status_code=403, detail="No perteneces a esta organización.")
+        if data.parent_id:
+            cursor = await db.execute("SELECT id FROM folders WHERE id = ? AND org_id = ?", (data.parent_id, target_org))
+            if not await cursor.fetchone():
+                raise HTTPException(status_code=400, detail="La carpeta padre no existe en esta organización.")
+    else:
+        if data.parent_id:
+            cursor = await db.execute("SELECT id FROM folders WHERE id = ? AND user_id = ? AND (org_id IS NULL OR org_id = '')", (data.parent_id, current_user.id))
+            if not await cursor.fetchone():
+                raise HTTPException(status_code=400, detail="La carpeta padre no existe.")
 
     folder_id = str(uuid.uuid4())
     now = datetime.datetime.now(datetime.timezone.utc).isoformat()
@@ -568,10 +959,10 @@ async def create_folder(
 
     await db.execute(
         """
-        INSERT INTO folders (id, name, parent_id, icon, color, user_id, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO folders (id, name, parent_id, icon, color, user_id, org_id, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        (folder_id, data.name.strip(), data.parent_id, icon, color, current_user.id, now, now)
+        (folder_id, data.name.strip(), data.parent_id, icon, color, current_user.id, target_org, now, now)
     )
     await db.commit()
 
@@ -583,6 +974,7 @@ async def create_folder(
         "color": color,
         "reel_count": 0,
         "total_reel_count": 0,
+        "org_id": target_org,
         "children": [],
         "created_at": now,
         "updated_at": now,
@@ -674,14 +1066,30 @@ async def analyze_reel(
         print(f"❌ [Analyze Validation Error] {str(ve)}")
         raise HTTPException(status_code=400, detail=str(ve))
 
-    # 1. Comprobar si ya existe para este usuario (comprobando url normalizada y variaciones www)
+    target_org = request.org_id.strip() if request.org_id and request.org_id.strip() else None
+    if target_org:
+        db_check = await get_connection()
+        try:
+            role = await get_user_org_role(db_check, current_user.id, target_org)
+            if not role and not current_user.is_admin:
+                raise HTTPException(status_code=403, detail="No perteneces a esta organización.")
+        finally:
+            await db_check.close()
+
+    # 1. Comprobar si ya existe en este ámbito (personal u organización)
     alt_url = url.replace("https://", "https://www.") if "://www." not in url else url.replace("://www.", "://")
     db = await get_connection()
     try:
-        cursor = await db.execute(
-            f"{BASE_REEL_SELECT} WHERE (r.url = ? OR r.url = ? OR r.url = ?) AND r.user_id = ?",
-            (url, request.url.strip(), alt_url, current_user.id)
-        )
+        if target_org:
+            cursor = await db.execute(
+                f"{BASE_REEL_SELECT} WHERE (r.url = ? OR r.url = ? OR r.url = ?) AND r.org_id = ?",
+                (url, request.url.strip(), alt_url, target_org)
+            )
+        else:
+            cursor = await db.execute(
+                f"{BASE_REEL_SELECT} WHERE (r.url = ? OR r.url = ? OR r.url = ?) AND r.user_id = ? AND (r.org_id IS NULL OR r.org_id = '')",
+                (url, request.url.strip(), alt_url, current_user.id)
+            )
         existing = await cursor.fetchone()
         if existing:
             dup = format_reel_row(existing)
@@ -763,7 +1171,7 @@ async def analyze_reel(
     if url.startswith("data:image/") and stored_thumb:
         url = stored_thumb
 
-    # 5. Guardar en SQLite de forma atómica asociado a current_user
+    # 5. Guardar en SQLite de forma atómica asociado a current_user y target_org
     now = datetime.datetime.now(datetime.timezone.utc).isoformat()
     folder_id = request.folder_id if request.folder_id else None
 
@@ -775,8 +1183,8 @@ async def analyze_reel(
                 id, url, platform, author, author_url, original_title, thumbnail_url,
                 duration, title, summary, ai_tools, key_steps, prompts, tags,
                 difficulty, estimated_time, status, user_notes, folder_id, media_type,
-                images, user_id, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                images, user_id, org_id, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 reel_id,
@@ -801,13 +1209,14 @@ async def analyze_reel(
                 extraction.media_type,
                 json.dumps(stored_images, ensure_ascii=False),
                 current_user.id,
+                target_org,
                 now,
                 now,
             )
         )
         await db.commit()
 
-        new_reel = await fetch_reel_by_id(db, reel_id, user_id=current_user.id)
+        new_reel = await fetch_reel_accessible_by_user(db, reel_id, user_id=current_user.id, is_admin=current_user.is_admin)
         if not new_reel:
             raise HTTPException(status_code=500, detail="Error al recuperar el reel recién guardado")
         return new_reel
@@ -823,11 +1232,23 @@ async def list_reels(
     folder_id: Optional[str] = Query(None, description="Filtrar por carpeta ('unassigned' para sin carpeta)"),
     media_type: Optional[str] = Query(None, description="Filtrar por tipo: 'reel' (<10m) o 'video' (>10m)"),
     time: Optional[str] = Query(None, description="Filtrar por tiempo: '< 5 min', '15-30 min', '> 1 hora'"),
+    org_id: Optional[str] = Query(None, description="ID de organización si se consulta bóveda compartida"),
     current_user: CurrentUser = Depends(require_auth),
     db: aiosqlite.Connection = Depends(get_db)
 ):
-    query = f"{BASE_REEL_SELECT} WHERE r.user_id = ?"
-    params = [current_user.id]
+    if org_id and org_id.strip():
+        role = await get_user_org_role(db, current_user.id, org_id)
+        if not role and not current_user.is_admin:
+            raise HTTPException(status_code=403, detail="No perteneces a esta organización.")
+        query = f"{BASE_REEL_SELECT} WHERE r.org_id = ?"
+        params = [org_id]
+        subtree_user = None
+        subtree_org = org_id
+    else:
+        query = f"{BASE_REEL_SELECT} WHERE r.user_id = ? AND (r.org_id IS NULL OR r.org_id = '')"
+        params = [current_user.id]
+        subtree_user = current_user.id
+        subtree_org = None
 
     if media_type:
         if media_type == 'reel':
@@ -840,7 +1261,7 @@ async def list_reels(
         if folder_id in ("unassigned", "none"):
             query += " AND r.folder_id IS NULL"
         else:
-            subtree_ids = await get_folder_subtree_ids(db, folder_id, user_id=current_user.id)
+            subtree_ids = await get_folder_subtree_ids(db, folder_id, user_id=subtree_user, org_id=subtree_org)
             placeholders = ",".join("?" for _ in subtree_ids)
             query += f" AND r.folder_id IN ({placeholders})"
             params.extend(subtree_ids)
@@ -878,7 +1299,7 @@ async def get_reel(
     current_user: CurrentUser = Depends(require_auth),
     db: aiosqlite.Connection = Depends(get_db)
 ):
-    reel = await fetch_reel_by_id(db, reel_id, user_id=current_user.id)
+    reel = await fetch_reel_accessible_by_user(db, reel_id, user_id=current_user.id, is_admin=current_user.is_admin)
     if not reel:
         raise HTTPException(status_code=404, detail="Reel no encontrado.")
     return reel
@@ -890,6 +1311,20 @@ async def update_reel(
     current_user: CurrentUser = Depends(require_auth),
     db: aiosqlite.Connection = Depends(get_db)
 ):
+    cursor = await db.execute("SELECT user_id, org_id FROM reels WHERE id = ?", (reel_id,))
+    row = await cursor.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Reel no encontrado.")
+
+    can_edit = (row["user_id"] == current_user.id) or current_user.is_admin
+    if not can_edit and row["org_id"]:
+        role = await get_user_org_role(db, current_user.id, row["org_id"])
+        if role in ("owner", "admin"):
+            can_edit = True
+
+    if not can_edit:
+        raise HTTPException(status_code=404, detail="Reel no encontrado.")
+
     updates = []
     params = []
 
@@ -926,13 +1361,10 @@ async def update_reel(
         updates.append("updated_at = ?")
         params.append(now)
         params.append(reel_id)
-        params.append(current_user.id)
-        cursor = await db.execute(f"UPDATE reels SET {', '.join(updates)} WHERE id = ? AND user_id = ?", params)
-        if cursor.rowcount == 0:
-            raise HTTPException(status_code=404, detail="Reel no encontrado.")
+        await db.execute(f"UPDATE reels SET {', '.join(updates)} WHERE id = ?", params)
         await db.commit()
 
-    updated = await fetch_reel_by_id(db, reel_id, user_id=current_user.id)
+    updated = await fetch_reel_accessible_by_user(db, reel_id, user_id=current_user.id, is_admin=current_user.is_admin)
     if not updated:
         raise HTTPException(status_code=404, detail="Reel no encontrado.")
     return updated
@@ -943,20 +1375,41 @@ async def delete_reel(
     current_user: CurrentUser = Depends(require_auth),
     db: aiosqlite.Connection = Depends(get_db)
 ):
-    cursor = await db.execute("DELETE FROM reels WHERE id = ? AND user_id = ?", (reel_id, current_user.id))
-    if cursor.rowcount == 0:
+    cursor = await db.execute("SELECT user_id, org_id FROM reels WHERE id = ?", (reel_id,))
+    row = await cursor.fetchone()
+    if not row:
         raise HTTPException(status_code=404, detail="Reel no encontrado.")
 
+    can_delete = (row["user_id"] == current_user.id) or current_user.is_admin
+    if not can_delete and row["org_id"]:
+        role = await get_user_org_role(db, current_user.id, row["org_id"])
+        if role in ("owner", "admin"):
+            can_delete = True
+
+    if not can_delete:
+        raise HTTPException(status_code=404, detail="Reel no encontrado.")
+
+    await db.execute("DELETE FROM reels WHERE id = ?", (reel_id,))
     await db.commit()
     return {"success": True, "message": "Reel eliminado correctamente"}
 
 @app.get("/api/stats")
 async def get_stats(
+    org_id: Optional[str] = Query(None, description="ID de organización opcional"),
     current_user: CurrentUser = Depends(require_auth),
     db: aiosqlite.Connection = Depends(get_db)
 ):
-    # 1. Consulta consolidada en 1 solo pase para todos los contadores del usuario
-    cursor = await db.execute("""
+    if org_id and org_id.strip():
+        role = await get_user_org_role(db, current_user.id, org_id)
+        if not role and not current_user.is_admin:
+            raise HTTPException(status_code=403, detail="No perteneces a esta organización.")
+        where_cond = "org_id = ?"
+        target_param = org_id
+    else:
+        where_cond = "user_id = ? AND (org_id IS NULL OR org_id = '')"
+        target_param = current_user.id
+
+    cursor = await db.execute(f"""
         SELECT 
             COUNT(*) as total,
             COALESCE(SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END), 0) as pending,
@@ -967,35 +1420,46 @@ async def get_stats(
             COALESCE(SUM(CASE WHEN media_type = 'video' THEN 1 ELSE 0 END), 0) as videos_count,
             COALESCE(SUM(CASE WHEN media_type = 'image' THEN 1 ELSE 0 END), 0) as images_count
         FROM reels
-        WHERE user_id = ?
-    """, (current_user.id,))
+        WHERE {where_cond}
+    """, (target_param,))
     counts = dict(await cursor.fetchone())
 
-    # 2. Agregación de herramientas de este usuario
     try:
-        cursor_tools = await db.execute("""
+        cursor_tools = await db.execute(f"""
             SELECT TRIM(value) as name, COUNT(*) as count 
             FROM reels, json_each(reels.ai_tools) 
-            WHERE user_id = ? AND TRIM(value) != ''
+            WHERE {where_cond} AND TRIM(value) != ''
             GROUP BY LOWER(TRIM(value)) 
             ORDER BY count DESC LIMIT 12
-        """, (current_user.id,))
+        """, (target_param,))
         sorted_tools = [dict(r) for r in await cursor_tools.fetchall()]
     except Exception:
         sorted_tools = []
 
-    # 3. Agregación de etiquetas de este usuario
     try:
-        cursor_tags = await db.execute("""
+        cursor_tags = await db.execute(f"""
             SELECT LOWER(TRIM(value)) as name, COUNT(*) as count 
             FROM reels, json_each(reels.tags) 
-            WHERE user_id = ? AND TRIM(value) != ''
+            WHERE {where_cond} AND TRIM(value) != ''
             GROUP BY LOWER(TRIM(value)) 
             ORDER BY count DESC LIMIT 12
-        """, (current_user.id,))
+        """, (target_param,))
         sorted_tags = [dict(r) for r in await cursor_tags.fetchall()]
     except Exception:
         sorted_tags = []
+
+    return {
+        "total": counts["total"],
+        "reels_count": counts["reels_count"],
+        "videos_count": counts["videos_count"],
+        "images_count": counts["images_count"],
+        "pending": counts["pending"],
+        "tested": counts["tested"],
+        "favorite": counts["favorite"],
+        "unassigned": counts["unassigned"],
+        "top_tools": sorted_tools,
+        "top_tags": sorted_tags,
+    }
 
     return {
         "total": counts["total"],
@@ -1189,6 +1653,7 @@ async def optimize_prompt(request: PromptOptimizeRequest):
 @app.post("/api/vault/ask", response_model=VaultAskResponse)
 async def ask_vault(
     request: VaultAskRequest,
+    org_id: Optional[str] = Query(None, description="ID de organización opcional"),
     current_user: CurrentUser = Depends(require_auth),
     db: aiosqlite.Connection = Depends(get_db)
 ):
@@ -1199,7 +1664,13 @@ async def ask_vault(
     if not api_key:
         raise HTTPException(status_code=400, detail="Falta configurar la Gemini API Key.")
 
-    cursor = await db.execute(f"{BASE_REEL_SELECT} WHERE r.user_id = ? ORDER BY r.created_at DESC LIMIT 120", (current_user.id,))
+    if org_id and org_id.strip():
+        role = await get_user_org_role(db, current_user.id, org_id)
+        if not role and not current_user.is_admin:
+            raise HTTPException(status_code=403, detail="No perteneces a esta organización.")
+        cursor = await db.execute(f"{BASE_REEL_SELECT} WHERE r.org_id = ? ORDER BY r.created_at DESC LIMIT 120", (org_id,))
+    else:
+        cursor = await db.execute(f"{BASE_REEL_SELECT} WHERE r.user_id = ? AND (r.org_id IS NULL OR r.org_id = '') ORDER BY r.created_at DESC LIMIT 120", (current_user.id,))
     rows = await cursor.fetchall()
     reels = [format_reel_row(row) for row in rows]
 

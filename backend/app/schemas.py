@@ -12,6 +12,10 @@ class LoginResponse(BaseModel):
     username: Optional[str] = None
     is_admin: Optional[bool] = False
 
+class RegisterRequest(BaseModel):
+    username: str = Field(..., min_length=2, max_length=50, description="Nombre de usuario único")
+    pin: str = Field(..., min_length=4, max_length=32, description="PIN o clave de acceso (mínimo 4 caracteres)")
+
 class AuthStatusResponse(BaseModel):
     auth_required: bool
     is_authenticated: bool
@@ -31,11 +35,45 @@ class UserResponse(BaseModel):
     created_at: str
     reel_count: int = 0
 
+# --- Esquemas de Organización (Workspaces Colaborativos) ---
+
+class OrganizationCreate(BaseModel):
+    name: str = Field(..., min_length=2, max_length=100, description="Nombre del equipo u organización")
+    description: Optional[str] = Field("", max_length=500, description="Descripción del espacio de trabajo")
+
+class OrganizationUpdate(BaseModel):
+    name: Optional[str] = Field(None, min_length=2, max_length=100)
+    description: Optional[str] = Field(None, max_length=500)
+
+class OrganizationMemberAdd(BaseModel):
+    username: str = Field(..., description="Nombre del usuario a invitar o añadir")
+    role: str = Field("member", description="Rol en el equipo: 'admin' o 'member'")
+
+class OrganizationMemberResponse(BaseModel):
+    user_id: str
+    username: str
+    role: str
+    joined_at: str
+
+class OrganizationResponse(BaseModel):
+    id: str
+    name: str
+    slug: str
+    description: str
+    owner_id: str
+    owner_username: Optional[str] = None
+    role: Optional[str] = None
+    members_count: int = 1
+    reels_count: int = 0
+    created_at: str
+    updated_at: str
+
 class FolderCreate(BaseModel):
     name: str = Field(..., description="Nombre de la carpeta o subcarpeta")
     parent_id: Optional[str] = Field(None, description="ID de la carpeta padre si es una subcarpeta")
     icon: Optional[str] = Field("📁", description="Emoji o icono de la carpeta")
     color: Optional[str] = Field("#8b5cf6", description="Color representativo")
+    org_id: Optional[str] = Field(None, description="ID de la organización si es compartida")
 
 class FolderUpdate(BaseModel):
     name: Optional[str] = None
@@ -51,6 +89,7 @@ class FolderItem(BaseModel):
     color: str
     reel_count: int = 0
     total_reel_count: int = 0
+    org_id: Optional[str] = None
     children: List['FolderItem'] = []
     created_at: str
     updated_at: str
@@ -61,6 +100,7 @@ class ReelAnalyzeRequest(BaseModel):
     url: str = Field(..., description="URL del vídeo o imagen (TikTok, Instagram Reel/Post, YouTube, X/Twitter, infografía directa, data URL)")
     folder_id: Optional[str] = Field(None, description="ID de la carpeta donde guardarlo")
     media_type: Optional[str] = Field("auto", description="'auto' (determina según duración o formato), 'reel', 'video' o 'image'")
+    org_id: Optional[str] = Field(None, description="ID de la organización destino (bóveda compartida)")
 
 class GeminiAnalysisResult(BaseModel):
     title: str = Field(..., description="Título atractivo y conciso de qué trata el truco o herramienta de IA explicada")
@@ -93,6 +133,7 @@ class ReelResponse(BaseModel):
     user_notes: str
     folder_id: Optional[str] = None
     folder_name: Optional[str] = None
+    org_id: Optional[str] = None
     media_type: str = "reel"  # 'reel' (<10 min), 'video' (>10 min) o 'image' (infografía/cheatsheet)
     images: List[str] = Field(default_factory=list, description="Lista de imágenes si es un carrusel o infografía múltiple")
     is_duplicate: bool = False

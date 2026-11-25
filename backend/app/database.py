@@ -43,6 +43,34 @@ async def init_db():
             );
         """)
 
+        # Tabla de organizaciones (espacios de trabajo compartidos estilo GitHub)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS organizations (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                slug TEXT UNIQUE NOT NULL,
+                description TEXT DEFAULT '',
+                owner_id TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (owner_id) REFERENCES users(id) ON DELETE CASCADE
+            );
+        """)
+
+        # Miembros de la organización y sus roles (owner, admin, member)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS organization_members (
+                id TEXT PRIMARY KEY,
+                org_id TEXT NOT NULL,
+                user_id TEXT NOT NULL,
+                role TEXT NOT NULL DEFAULT 'member',
+                created_at TEXT NOT NULL,
+                UNIQUE(org_id, user_id),
+                FOREIGN KEY (org_id) REFERENCES organizations(id) ON DELETE CASCADE,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            );
+        """)
+
         # Tabla de carpetas jerárquicas
         await db.execute("""
             CREATE TABLE IF NOT EXISTS folders (
@@ -52,9 +80,11 @@ async def init_db():
                 icon TEXT DEFAULT '📁',
                 color TEXT DEFAULT '#8b5cf6',
                 user_id TEXT DEFAULT 'admin',
+                org_id TEXT DEFAULT NULL,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
-                FOREIGN KEY (parent_id) REFERENCES folders(id) ON DELETE CASCADE
+                FOREIGN KEY (parent_id) REFERENCES folders(id) ON DELETE CASCADE,
+                FOREIGN KEY (org_id) REFERENCES organizations(id) ON DELETE CASCADE
             );
         """)
 
@@ -82,9 +112,11 @@ async def init_db():
                 media_type TEXT DEFAULT 'reel',
                 images TEXT NOT NULL DEFAULT '[]',
                 user_id TEXT DEFAULT 'admin',
+                org_id TEXT DEFAULT NULL,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
-                FOREIGN KEY (folder_id) REFERENCES folders(id) ON DELETE SET NULL
+                FOREIGN KEY (folder_id) REFERENCES folders(id) ON DELETE SET NULL,
+                FOREIGN KEY (org_id) REFERENCES organizations(id) ON DELETE CASCADE
             );
         """)
 
@@ -103,11 +135,15 @@ async def init_db():
             await db.execute("ALTER TABLE reels ADD COLUMN images TEXT DEFAULT '[]';")
         if "user_id" not in columns:
             await db.execute("ALTER TABLE reels ADD COLUMN user_id TEXT DEFAULT 'admin';")
+        if "org_id" not in columns:
+            await db.execute("ALTER TABLE reels ADD COLUMN org_id TEXT DEFAULT NULL;")
 
         cursor_f = await db.execute("PRAGMA table_info(folders);")
         f_columns = [row[1] for row in await cursor_f.fetchall()]
         if "user_id" not in f_columns:
             await db.execute("ALTER TABLE folders ADD COLUMN user_id TEXT DEFAULT 'admin';")
+        if "org_id" not in f_columns:
+            await db.execute("ALTER TABLE folders ADD COLUMN org_id TEXT DEFAULT NULL;")
 
         # Asegurar usuario administrador por defecto
         cursor_u = await db.execute("SELECT id FROM users WHERE username = 'admin' OR id = 'admin';")
@@ -144,6 +180,14 @@ async def init_db():
         await db.execute("CREATE INDEX IF NOT EXISTS idx_reels_user_url ON reels(user_id, url);")
         await db.execute("CREATE INDEX IF NOT EXISTS idx_folders_user_id ON folders(user_id);")
         await db.execute("CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);")
+
+        # Índices para organizaciones y colaboración en equipo
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_reels_org_id ON reels(org_id);")
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_reels_org_created ON reels(org_id, created_at DESC);")
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_folders_org_id ON folders(org_id);")
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_org_members_user ON organization_members(user_id);")
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_org_members_org ON organization_members(org_id);")
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_organizations_slug ON organizations(slug);")
 
         # Tabla de configuraciones
         await db.execute("""

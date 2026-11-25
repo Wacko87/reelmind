@@ -149,7 +149,120 @@ async def run_suite():
         assert stats["total"] == 1
         print("  ✓ Paso 10: Estadísticas (/api/stats) aisladas por usuario.")
 
-        print("\n🎉 TODOS LOS 10 TESTS DE AISLAMIENTO MULTIUSUARIO PASARON EXITOSAMENTE!")
+        # 11. Self-Registration (Ana creates account directly from app)
+        res_reg = await client.post(
+            "/api/auth/register",
+            json={"username": "ana", "pin": "4321"}
+        )
+        assert res_reg.status_code == 200, res_reg.text
+        ana_auth = res_reg.json()
+        assert ana_auth["success"] is True
+        assert ana_auth["username"] == "ana"
+        ana_token = ana_auth["token"]
+        ana_headers = {"Authorization": f"Bearer {ana_token}"}
+        print("  ✓ Paso 11: Auto-registro de 'ana' desde la app validado exitosamente.")
+
+        # Re-registering 'ana' should fail
+        res_reg_dup = await client.post(
+            "/api/auth/register",
+            json={"username": "ana", "pin": "9999"}
+        )
+        assert res_reg_dup.status_code == 400
+        print("  ✓ Paso 12: Prevención de nombres de usuario duplicados comprobada.")
+
+        # 13. Create Organization (Carlos creates 'Equipo AI')
+        res_org = await client.post(
+            "/api/orgs",
+            headers=carlos_headers,
+            json={"name": "Equipo AI", "description": "Proyectos conjuntos de vídeo con IA"}
+        )
+        assert res_org.status_code == 200, res_org.text
+        org_data = res_org.json()
+        org_id = org_data["id"]
+        assert org_data["name"] == "Equipo AI"
+        assert org_data["role"] == "owner"
+        print(f"  ✓ Paso 13: Organización 'Equipo AI' creada por Carlos (ID: {org_id}).")
+
+        # 14. Add Member (Carlos invites Ana to the Organization)
+        res_invite = await client.post(
+            f"/api/orgs/{org_id}/members",
+            headers=carlos_headers,
+            json={"username": "ana", "role": "member"}
+        )
+        assert res_invite.status_code == 200, res_invite.text
+        ana_member_info = res_invite.json()
+        ana_id = ana_member_info["user_id"]
+        assert ana_member_info["username"] == "ana"
+        print("  ✓ Paso 14: Carlos invitó a Ana al 'Equipo AI' como miembro.")
+
+        # 15. Ana sees the Organization in her list
+        res_ana_orgs = await client.get("/api/orgs", headers=ana_headers)
+        assert res_ana_orgs.status_code == 200
+        ana_org_names = [o["name"] for o in res_ana_orgs.json()]
+        assert "Equipo AI" in ana_org_names
+        print("  ✓ Paso 15: Ana lista 'Equipo AI' en sus organizaciones disponibles.")
+
+        # 16. Shared Organization Vault (Carlos inserts a shared reel into the org)
+        async with aiosqlite.connect(test_db_path) as db:
+            await db.execute(
+                """
+                INSERT INTO reels (id, user_id, org_id, url, platform, title, summary, created_at, updated_at)
+                VALUES (?, ?, ?, ?, 'youtube', ?, ?, datetime('now'), datetime('now'))
+                """,
+                ("reel-shared-1", carlos_id, org_id, "https://youtube.com/shorts/ai-trick", "Truco Compartido Midjourney", "Prompting secreto de equipo")
+            )
+            await db.commit()
+
+        # Both Carlos and Ana see the reel in the organization vault
+        res_org_reels_carlos = await client.get(f"/api/reels?org_id={org_id}", headers=carlos_headers)
+        assert res_org_reels_carlos.status_code == 200
+        assert len(res_org_reels_carlos.json()) == 1
+        assert res_org_reels_carlos.json()[0]["title"] == "Truco Compartido Midjourney"
+
+        res_org_reels_ana = await client.get(f"/api/reels?org_id={org_id}", headers=ana_headers)
+        assert res_org_reels_ana.status_code == 200
+        assert len(res_org_reels_ana.json()) == 1
+        assert res_org_reels_ana.json()[0]["title"] == "Truco Compartido Midjourney"
+        print("  ✓ Paso 16: Bóveda compartida verificada: Carlos y Ana colaboran sobre los mismos reels.")
+
+        # Ana's personal vault is empty (personal reels remain isolated)
+        res_ana_personal = await client.get("/api/reels", headers=ana_headers)
+        assert res_ana_personal.status_code == 200
+        assert len(res_ana_personal.json()) == 0
+        print("  ✓ Paso 17: Bóveda personal de Ana permanece limpia y aislada de los reels del equipo.")
+
+        # 18. Shared Vault - Folders
+        res_shared_folder = await client.post(
+            "/api/folders",
+            headers=ana_headers,
+            json={"name": "Carpeta Compartida Marketing", "org_id": org_id}
+        )
+        assert res_shared_folder.status_code == 200
+        shared_folder_id = res_shared_folder.json()["id"]
+
+        # Carlos sees Ana's folder in the organization
+        res_carlos_org_folders = await client.get(f"/api/folders?org_id={org_id}", headers=carlos_headers)
+        assert res_carlos_org_folders.status_code == 200
+        assert any(f["name"] == "Carpeta Compartida Marketing" for f in res_carlos_org_folders.json())
+        print("  ✓ Paso 18: Creación y sincronización de carpetas compartidas de organización verificada.")
+
+        # 19. Access Control: A non-member cannot access organization vault
+        # Create user 'pedro'
+        res_pedro = await client.post("/api/auth/register", json={"username": "pedro", "pin": "5555"})
+        pedro_headers = {"Authorization": f"Bearer {res_pedro.json()['token']}"}
+
+        res_pedro_forbidden = await client.get(f"/api/reels?org_id={org_id}", headers=pedro_headers)
+        assert res_pedro_forbidden.status_code == 403
+        print("  ✓ Paso 19: Seguridad RBAC: Usuario externo (Pedro) recibe 403 Forbidden al consultar la organización.")
+
+        # 20. Member leaves the organization
+        res_leave = await client.delete(f"/api/orgs/{org_id}/members/{ana_id}", headers=ana_headers)
+        assert res_leave.status_code == 200
+        res_ana_now_forbidden = await client.get(f"/api/reels?org_id={org_id}", headers=ana_headers)
+        assert res_ana_now_forbidden.status_code == 403
+        print("  ✓ Paso 20: Salida voluntaria de organización validada (Ana ya no tiene acceso tras salir).")
+
+        print("\n🎉 TODOS LOS 20 TESTS DE MULTIUSUARIO, AUTO-REGISTRO Y ORGANIZACIONES PASARON EXITOSAMENTE!")
 
 if __name__ == "__main__":
     asyncio.run(run_suite())
