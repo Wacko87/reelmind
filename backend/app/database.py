@@ -31,6 +31,18 @@ async def init_db():
         await db.execute("PRAGMA foreign_keys=ON;")
         await db.execute("PRAGMA busy_timeout=5000;")
         
+        # Tabla de usuarios
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id TEXT PRIMARY KEY,
+                username TEXT UNIQUE NOT NULL,
+                pin_hash TEXT NOT NULL,
+                is_admin INTEGER DEFAULT 0,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+        """)
+
         # Tabla de carpetas jerárquicas
         await db.execute("""
             CREATE TABLE IF NOT EXISTS folders (
@@ -39,6 +51,7 @@ async def init_db():
                 parent_id TEXT,
                 icon TEXT DEFAULT '📁',
                 color TEXT DEFAULT '#8b5cf6',
+                user_id TEXT DEFAULT 'admin',
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 FOREIGN KEY (parent_id) REFERENCES folders(id) ON DELETE CASCADE
@@ -49,7 +62,7 @@ async def init_db():
         await db.execute("""
             CREATE TABLE IF NOT EXISTS reels (
                 id TEXT PRIMARY KEY,
-                url TEXT UNIQUE NOT NULL,
+                url TEXT NOT NULL,
                 platform TEXT NOT NULL,
                 author TEXT,
                 author_url TEXT,
@@ -68,6 +81,7 @@ async def init_db():
                 folder_id TEXT,
                 media_type TEXT DEFAULT 'reel',
                 images TEXT NOT NULL DEFAULT '[]',
+                user_id TEXT DEFAULT 'admin',
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 FOREIGN KEY (folder_id) REFERENCES folders(id) ON DELETE SET NULL
@@ -87,6 +101,31 @@ async def init_db():
             await db.execute("ALTER TABLE reels ADD COLUMN estimated_time TEXT DEFAULT '15-30 min';")
         if "images" not in columns:
             await db.execute("ALTER TABLE reels ADD COLUMN images TEXT DEFAULT '[]';")
+        if "user_id" not in columns:
+            await db.execute("ALTER TABLE reels ADD COLUMN user_id TEXT DEFAULT 'admin';")
+
+        cursor_f = await db.execute("PRAGMA table_info(folders);")
+        f_columns = [row[1] for row in await cursor_f.fetchall()]
+        if "user_id" not in f_columns:
+            await db.execute("ALTER TABLE folders ADD COLUMN user_id TEXT DEFAULT 'admin';")
+
+        # Asegurar usuario administrador por defecto
+        cursor_u = await db.execute("SELECT id FROM users WHERE username = 'admin' OR id = 'admin';")
+        admin_row = await cursor_u.fetchone()
+        if not admin_row:
+            from datetime import datetime, timezone
+            from .security import hash_pin
+            now_iso = datetime.now(timezone.utc).isoformat()
+            default_pin = settings.AUTH_PIN or "3004"
+            hashed = hash_pin(default_pin)
+            await db.execute(
+                "INSERT INTO users (id, username, pin_hash, is_admin, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?);",
+                ("admin", "admin", hashed, 1, now_iso, now_iso)
+            )
+
+        # Migrar datos existentes huérfanos al usuario admin
+        await db.execute("UPDATE reels SET user_id = 'admin' WHERE user_id IS NULL OR user_id = '';")
+        await db.execute("UPDATE folders SET user_id = 'admin' WHERE user_id IS NULL OR user_id = '';")
 
         # Normalizar URLs con www a dominio canónico para asegurar detección infalible de duplicados
         await db.execute("UPDATE reels SET url = REPLACE(url, '://www.', '://') WHERE url LIKE '%://www.%';")
@@ -100,6 +139,11 @@ async def init_db():
         await db.execute("CREATE INDEX IF NOT EXISTS idx_reels_media_created ON reels(media_type, created_at DESC);")
         await db.execute("CREATE INDEX IF NOT EXISTS idx_reels_estimated_time ON reels(estimated_time);")
         await db.execute("CREATE INDEX IF NOT EXISTS idx_folders_parent_id ON folders(parent_id);")
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_reels_user_id ON reels(user_id);")
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_reels_user_created ON reels(user_id, created_at DESC);")
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_reels_user_url ON reels(user_id, url);")
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_folders_user_id ON folders(user_id);")
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);")
 
         # Tabla de configuraciones
         await db.execute("""

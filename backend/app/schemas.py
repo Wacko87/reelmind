@@ -3,15 +3,33 @@ from typing import List, Optional, Union
 
 class LoginRequest(BaseModel):
     pin: str = Field(..., description="PIN o contraseña de acceso configurada")
+    username: Optional[str] = Field(None, description="Nombre de usuario opcional")
 
 class LoginResponse(BaseModel):
     success: bool
     token: Optional[str] = None
     message: Optional[str] = None
+    username: Optional[str] = None
+    is_admin: Optional[bool] = False
 
 class AuthStatusResponse(BaseModel):
     auth_required: bool
     is_authenticated: bool
+    username: Optional[str] = None
+    user_id: Optional[str] = None
+    is_admin: Optional[bool] = False
+
+class UserCreate(BaseModel):
+    username: str = Field(..., min_length=2, max_length=50, description="Nombre de usuario único")
+    pin: str = Field(..., min_length=4, max_length=32, description="PIN o contraseña de acceso")
+    is_admin: Optional[bool] = Field(False, description="¿Tiene permisos de administrador?")
+
+class UserResponse(BaseModel):
+    id: str
+    username: str
+    is_admin: bool
+    created_at: str
+    reel_count: int = 0
 
 class FolderCreate(BaseModel):
     name: str = Field(..., description="Nombre de la carpeta o subcarpeta")

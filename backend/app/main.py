@@ -20,8 +20,8 @@ import aiosqlite
 
 from .config import settings
 from .database import get_db, init_db, get_connection, DB_PATH
-from .auth import require_auth, create_auth_token, verify_token_string
-from .security import encrypt_secret, decrypt_secret, verify_pin
+from .auth import require_auth, require_admin, get_current_user, CurrentUser, create_auth_token, verify_token_string, TOKEN_EXPIRATION_SECONDS
+from .security import encrypt_secret, decrypt_secret, verify_pin, hash_pin
 from .schemas import (
     ReelAnalyzeRequest,
     ReelResponse,
@@ -34,6 +34,8 @@ from .schemas import (
     LoginRequest,
     LoginResponse,
     AuthStatusResponse,
+    UserCreate,
+    UserResponse,
     PromptOptimizeRequest,
     PromptOptimizeResponse,
     VaultAskRequest,
@@ -283,28 +285,37 @@ tags:
     md += "---\n*Guardado con ReelMind Homelab*\n"
     return md
 
-async def fetch_reel_by_id(db: aiosqlite.Connection, reel_id: str) -> Optional[dict]:
-    cursor = await db.execute(f"{BASE_REEL_SELECT} WHERE r.id = ?", (reel_id,))
+async def fetch_reel_by_id(db: aiosqlite.Connection, reel_id: str, user_id: Optional[str] = None) -> Optional[dict]:
+    if user_id:
+        cursor = await db.execute(f"{BASE_REEL_SELECT} WHERE r.id = ? AND r.user_id = ?", (reel_id, user_id))
+    else:
+        cursor = await db.execute(f"{BASE_REEL_SELECT} WHERE r.id = ?", (reel_id,))
     row = await cursor.fetchone()
     return format_reel_row(row) if row else None
 
 # ==========================================
-# RUTAS DE AUTENTICACIÓN
+# RUTAS DE AUTENTICACIÓN Y MULTI-USUARIO
 # ==========================================
 
 @app.get("/api/auth/status", response_model=AuthStatusResponse)
-async def auth_status(request: Request, authorization: Optional[str] = Header(None)):
-    if not settings.AUTH_PIN:
-        return {"auth_required": False, "is_authenticated": True}
-    
-    token = None
-    if authorization and authorization.startswith("Bearer "):
-        token = authorization.split("Bearer ", 1)[1].strip()
-    if not token:
-        token = request.cookies.get("reelmind_auth")
-
-    is_auth = verify_token_string(token) if token else False
-    return {"auth_required": True, "is_authenticated": is_auth}
+async def auth_status(request: Request, authorization: Optional[str] = Header(None), x_service_key: Optional[str] = Header(None)):
+    try:
+        user = await get_current_user(request, authorization, x_service_key)
+        return {
+            "auth_required": bool(settings.AUTH_PIN),
+            "is_authenticated": True,
+            "username": user.username,
+            "user_id": user.id,
+            "is_admin": user.is_admin
+        }
+    except Exception:
+        return {
+            "auth_required": bool(settings.AUTH_PIN),
+            "is_authenticated": False,
+            "username": None,
+            "user_id": None,
+            "is_admin": False
+        }
 
 def prune_login_attempts(now_ts: float):
     """Depura periódicamente entradas caducadas en login_attempts para mitigar fugas de memoria."""
@@ -314,43 +325,72 @@ def prune_login_attempts(now_ts: float):
             login_attempts.pop(ip, None)
 
 @app.post("/api/auth/login", response_model=LoginResponse)
-async def login(data: LoginRequest, request: Request, response: Response):
-    if not settings.AUTH_PIN:
-        return {"success": True, "message": "Acceso libre (sin PIN configurado)"}
-
-    # Control de fuerza bruta por IP (respetando proxy inverso Nginx Proxy Manager): máx 5 intentos por minuto
+async def login(data: LoginRequest, request: Request, response: Response, db: aiosqlite.Connection = Depends(get_db)):
+    clean_pin = data.pin.strip()
     now_ts = time.time()
     prune_login_attempts(now_ts)
     forwarded = request.headers.get("x-forwarded-for")
     client_ip = forwarded.split(",")[0].strip() if forwarded else (request.client.host if request.client else "unknown")
     attempts = [t for t in login_attempts.get(client_ip, []) if now_ts - t < 60]
     
-    if len(attempts) >= 5:
+    if len(attempts) >= 10:
         raise HTTPException(
             status_code=429,
             detail="Demasiados intentos fallidos. Espera 60 segundos antes de volver a intentar."
         )
 
-    # Comparación segura en tiempo constante (soporta hash PBKDF2 y texto plano)
-    if not verify_pin(data.pin, settings.AUTH_PIN):
+    matching_user = None
+
+    # 1. Si se especificó nombre de usuario
+    if data.username and data.username.strip():
+        clean_user = data.username.strip().lower()
+        cursor = await db.execute("SELECT * FROM users WHERE LOWER(username) = ?;", (clean_user,))
+        user_row = await cursor.fetchone()
+        if user_row and verify_pin(clean_pin, user_row["pin_hash"]):
+            matching_user = user_row
+    else:
+        # 2. Búsqueda por PIN directo entre todos los usuarios registrados
+        cursor = await db.execute("SELECT * FROM users ORDER BY is_admin DESC, created_at ASC;")
+        users = await cursor.fetchall()
+        for u in users:
+            if verify_pin(clean_pin, u["pin_hash"]):
+                matching_user = u
+                break
+        
+        # 3. Fallback a AUTH_PIN global de .env
+        if not matching_user and settings.AUTH_PIN and verify_pin(clean_pin, settings.AUTH_PIN):
+            cursor = await db.execute("SELECT * FROM users WHERE id = 'admin';")
+            matching_user = await cursor.fetchone()
+
+    if not matching_user:
         attempts.append(now_ts)
         login_attempts[client_ip] = attempts
-        raise HTTPException(status_code=401, detail="PIN o contraseña de acceso incorrecta")
+        raise HTTPException(status_code=401, detail="PIN o usuario incorrecto.")
 
-    # Éxito: limpiar intentos
     login_attempts.pop(client_ip, None)
 
-    token = create_auth_token()
+    is_admin = bool(matching_user["is_admin"])
+    token = create_auth_token(
+        user_id=matching_user["id"],
+        username=matching_user["username"],
+        is_admin=is_admin
+    )
     is_secure = request.url.scheme == "https" or request.headers.get("x-forwarded-proto") == "https"
     response.set_cookie(
         key="reelmind_auth",
         value=token,
-        max_age=30 * 24 * 3600,
+        max_age=TOKEN_EXPIRATION_SECONDS,
         httponly=True,
         samesite="lax",
         secure=is_secure
     )
-    return {"success": True, "token": token, "message": "Autenticado con éxito"}
+    return {
+        "success": True,
+        "token": token,
+        "message": f"Autenticado con éxito como {matching_user['username']}",
+        "username": matching_user["username"],
+        "is_admin": is_admin
+    }
 
 @app.post("/api/auth/logout")
 async def logout(response: Response):
@@ -358,44 +398,119 @@ async def logout(response: Response):
     return {"success": True, "message": "Sesión cerrada"}
 
 # ==========================================
+# RUTAS DE GESTIÓN DE USUARIOS (ADMIN)
+# ==========================================
+
+@app.get("/api/users", response_model=List[UserResponse])
+async def list_users_route(current_user: CurrentUser = Depends(require_admin), db: aiosqlite.Connection = Depends(get_db)):
+    cursor = await db.execute("""
+        SELECT u.id, u.username, u.is_admin, u.created_at, COUNT(r.id) as reel_count
+        FROM users u
+        LEFT JOIN reels r ON r.user_id = u.id
+        GROUP BY u.id
+        ORDER BY u.created_at ASC;
+    """)
+    rows = await cursor.fetchall()
+    return [
+        {
+            "id": r["id"],
+            "username": r["username"],
+            "is_admin": bool(r["is_admin"]),
+            "created_at": r["created_at"],
+            "reel_count": r["reel_count"]
+        }
+        for r in rows
+    ]
+
+@app.post("/api/users", response_model=UserResponse)
+async def create_user_route(data: UserCreate, current_user: CurrentUser = Depends(require_admin), db: aiosqlite.Connection = Depends(get_db)):
+    clean_user = data.username.strip().lower()
+    cursor = await db.execute("SELECT id FROM users WHERE LOWER(username) = ?;", (clean_user,))
+    if await cursor.fetchone():
+        raise HTTPException(status_code=400, detail=f"El usuario '{clean_user}' ya existe.")
+
+    user_id = str(uuid.uuid4())
+    now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    hashed = hash_pin(data.pin.strip())
+
+    await db.execute(
+        "INSERT INTO users (id, username, pin_hash, is_admin, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?);",
+        (user_id, clean_user, hashed, 1 if data.is_admin else 0, now, now)
+    )
+    await db.commit()
+    return {
+        "id": user_id,
+        "username": clean_user,
+        "is_admin": bool(data.is_admin),
+        "created_at": now,
+        "reel_count": 0
+    }
+
+@app.delete("/api/users/{target_id}")
+async def delete_user_route(target_id: str, current_user: CurrentUser = Depends(require_admin), db: aiosqlite.Connection = Depends(get_db)):
+    if target_id == current_user.id or target_id == "admin":
+        raise HTTPException(status_code=400, detail="No puedes eliminar al administrador principal.")
+
+    await db.execute("DELETE FROM reels WHERE user_id = ?;", (target_id,))
+    await db.execute("DELETE FROM folders WHERE user_id = ?;", (target_id,))
+    await db.execute("DELETE FROM users WHERE id = ?;", (target_id,))
+    await db.commit()
+    return {"success": True, "message": f"Usuario {target_id} y sus datos eliminados con éxito."}
+
+# ==========================================
 # RUTAS DE CARPETAS Y SUBCARPETAS
 # ==========================================
 
-async def get_folder_subtree_ids(db: aiosqlite.Connection, parent_id: str) -> List[str]:
+async def get_folder_subtree_ids(db: aiosqlite.Connection, parent_id: str, user_id: Optional[str] = None) -> List[str]:
     """Obtiene el ID de la carpeta y todas sus subcarpetas descendientes en 1 sola consulta SQL recursiva nativa."""
-    query = """
-    WITH RECURSIVE subtree(id) AS (
-        SELECT id FROM folders WHERE id = ?
-        UNION ALL
-        SELECT f.id FROM folders f
-        JOIN subtree s ON f.parent_id = s.id
-    )
-    SELECT id FROM subtree;
-    """
-    cursor = await db.execute(query, (parent_id,))
+    if user_id:
+        query = """
+        WITH RECURSIVE subtree(id) AS (
+            SELECT id FROM folders WHERE id = ? AND user_id = ?
+            UNION ALL
+            SELECT f.id FROM folders f
+            JOIN subtree s ON f.parent_id = s.id
+            WHERE f.user_id = ?
+        )
+        SELECT id FROM subtree;
+        """
+        cursor = await db.execute(query, (parent_id, user_id, user_id))
+    else:
+        query = """
+        WITH RECURSIVE subtree(id) AS (
+            SELECT id FROM folders WHERE id = ?
+            UNION ALL
+            SELECT f.id FROM folders f
+            JOIN subtree s ON f.parent_id = s.id
+        )
+        SELECT id FROM subtree;
+        """
+        cursor = await db.execute(query, (parent_id,))
     rows = await cursor.fetchall()
     return [r[0] for r in rows] if rows else [parent_id]
 
-@app.get("/api/folders", response_model=List[FolderItem], dependencies=[Depends(require_auth)])
+@app.get("/api/folders", response_model=List[FolderItem])
 async def list_folders(
     media_type: Optional[str] = Query(None, description="Filtrar contadores por tipo ('reel' o 'video')"),
+    current_user: CurrentUser = Depends(require_auth),
     db: aiosqlite.Connection = Depends(get_db)
 ):
-    cursor = await db.execute("SELECT * FROM folders ORDER BY name ASC")
+    cursor = await db.execute("SELECT * FROM folders WHERE user_id = ? ORDER BY name ASC", (current_user.id,))
     rows = await cursor.fetchall()
     
     if media_type:
         if media_type == 'reel':
             cursor_counts = await db.execute(
-                "SELECT folder_id, COUNT(*) as count FROM reels WHERE folder_id IS NOT NULL AND (media_type = 'reel' OR media_type IS NULL) GROUP BY folder_id"
+                "SELECT folder_id, COUNT(*) as count FROM reels WHERE user_id = ? AND folder_id IS NOT NULL AND (media_type = 'reel' OR media_type IS NULL) GROUP BY folder_id",
+                (current_user.id,)
             )
         else:
             cursor_counts = await db.execute(
-                "SELECT folder_id, COUNT(*) as count FROM reels WHERE folder_id IS NOT NULL AND media_type = ? GROUP BY folder_id",
-                (media_type,)
+                "SELECT folder_id, COUNT(*) as count FROM reels WHERE user_id = ? AND folder_id IS NOT NULL AND media_type = ? GROUP BY folder_id",
+                (current_user.id, media_type)
             )
     else:
-        cursor_counts = await db.execute("SELECT folder_id, COUNT(*) as count FROM reels WHERE folder_id IS NOT NULL GROUP BY folder_id")
+        cursor_counts = await db.execute("SELECT folder_id, COUNT(*) as count FROM reels WHERE user_id = ? AND folder_id IS NOT NULL GROUP BY folder_id", (current_user.id,))
     counts_map = {r["folder_id"]: r["count"] for r in await cursor_counts.fetchall()}
 
     folder_map: Dict[str, dict] = {}
@@ -435,10 +550,14 @@ async def list_folders(
 
     return root_folders
 
-@app.post("/api/folders", response_model=FolderItem, dependencies=[Depends(require_auth)])
-async def create_folder(data: FolderCreate, db: aiosqlite.Connection = Depends(get_db)):
+@app.post("/api/folders", response_model=FolderItem)
+async def create_folder(
+    data: FolderCreate,
+    current_user: CurrentUser = Depends(require_auth),
+    db: aiosqlite.Connection = Depends(get_db)
+):
     if data.parent_id:
-        cursor = await db.execute("SELECT id FROM folders WHERE id = ?", (data.parent_id,))
+        cursor = await db.execute("SELECT id FROM folders WHERE id = ? AND user_id = ?", (data.parent_id, current_user.id))
         if not await cursor.fetchone():
             raise HTTPException(status_code=400, detail="La carpeta padre no existe.")
 
@@ -449,10 +568,10 @@ async def create_folder(data: FolderCreate, db: aiosqlite.Connection = Depends(g
 
     await db.execute(
         """
-        INSERT INTO folders (id, name, parent_id, icon, color, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO folders (id, name, parent_id, icon, color, user_id, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        (folder_id, data.name.strip(), data.parent_id, icon, color, now, now)
+        (folder_id, data.name.strip(), data.parent_id, icon, color, current_user.id, now, now)
     )
     await db.commit()
 
@@ -469,9 +588,14 @@ async def create_folder(data: FolderCreate, db: aiosqlite.Connection = Depends(g
         "updated_at": now,
     }
 
-@app.patch("/api/folders/{folder_id}", dependencies=[Depends(require_auth)])
-async def update_folder(folder_id: str, data: FolderUpdate, db: aiosqlite.Connection = Depends(get_db)):
-    cursor = await db.execute("SELECT * FROM folders WHERE id = ?", (folder_id,))
+@app.patch("/api/folders/{folder_id}")
+async def update_folder(
+    folder_id: str,
+    data: FolderUpdate,
+    current_user: CurrentUser = Depends(require_auth),
+    db: aiosqlite.Connection = Depends(get_db)
+):
+    cursor = await db.execute("SELECT * FROM folders WHERE id = ? AND user_id = ?", (folder_id, current_user.id))
     row = await cursor.fetchone()
     if not row:
         raise HTTPException(status_code=404, detail="Carpeta no encontrada.")
@@ -487,7 +611,7 @@ async def update_folder(folder_id: str, data: FolderUpdate, db: aiosqlite.Connec
         if data.parent_id == folder_id:
             raise HTTPException(status_code=400, detail="Una carpeta no puede ser subcarpeta de sí misma.")
         if data.parent_id != "":
-            descendant_ids = await get_folder_subtree_ids(db, folder_id)
+            descendant_ids = await get_folder_subtree_ids(db, folder_id, user_id=current_user.id)
             if data.parent_id in descendant_ids:
                 raise HTTPException(status_code=400, detail="No puedes mover una carpeta dentro de una de sus propias subcarpetas.")
         updates.append("parent_id = ?")
@@ -506,24 +630,29 @@ async def update_folder(folder_id: str, data: FolderUpdate, db: aiosqlite.Connec
         updates.append("updated_at = ?")
         params.append(now)
         params.append(folder_id)
-        await db.execute(f"UPDATE folders SET {', '.join(updates)} WHERE id = ?", params)
+        params.append(current_user.id)
+        await db.execute(f"UPDATE folders SET {', '.join(updates)} WHERE id = ? AND user_id = ?", params)
         await db.commit()
 
-    cursor = await db.execute("SELECT * FROM folders WHERE id = ?", (folder_id,))
+    cursor = await db.execute("SELECT * FROM folders WHERE id = ? AND user_id = ?", (folder_id, current_user.id))
     updated = await cursor.fetchone()
     return dict(updated)
 
-@app.delete("/api/folders/{folder_id}", dependencies=[Depends(require_auth)])
-async def delete_folder(folder_id: str, db: aiosqlite.Connection = Depends(get_db)):
-    cursor = await db.execute("SELECT id FROM folders WHERE id = ?", (folder_id,))
+@app.delete("/api/folders/{folder_id}")
+async def delete_folder(
+    folder_id: str,
+    current_user: CurrentUser = Depends(require_auth),
+    db: aiosqlite.Connection = Depends(get_db)
+):
+    cursor = await db.execute("SELECT id FROM folders WHERE id = ? AND user_id = ?", (folder_id, current_user.id))
     if not await cursor.fetchone():
         raise HTTPException(status_code=404, detail="Carpeta no encontrada.")
 
-    subtree_ids = await get_folder_subtree_ids(db, folder_id)
+    subtree_ids = await get_folder_subtree_ids(db, folder_id, user_id=current_user.id)
     placeholders = ",".join("?" for _ in subtree_ids)
-    await db.execute(f"UPDATE reels SET folder_id = NULL WHERE folder_id IN ({placeholders})", subtree_ids)
+    await db.execute(f"UPDATE reels SET folder_id = NULL WHERE folder_id IN ({placeholders}) AND user_id = ?", subtree_ids + [current_user.id])
 
-    await db.execute("DELETE FROM folders WHERE id = ?", (folder_id,))
+    await db.execute("DELETE FROM folders WHERE id = ? AND user_id = ?", (folder_id, current_user.id))
     await db.commit()
     return {"success": True, "message": "Carpeta eliminada"}
 
@@ -531,24 +660,27 @@ async def delete_folder(folder_id: str, db: aiosqlite.Connection = Depends(get_d
 # RUTAS DE REELS
 # ==========================================
 
-@app.post("/api/reels/analyze", response_model=ReelResponse, dependencies=[Depends(require_auth)])
-async def analyze_reel(request: ReelAnalyzeRequest):
+@app.post("/api/reels/analyze", response_model=ReelResponse)
+async def analyze_reel(
+    request: ReelAnalyzeRequest,
+    current_user: CurrentUser = Depends(require_auth)
+):
     req_type = request.media_type or "auto"
     is_img = (req_type == "image")
-    print(f"📥 [Analyze Request] url='{request.url[:120]}' media_type='{req_type}'")
+    print(f"📥 [Analyze Request] user='{current_user.username}' url='{request.url[:120]}' media_type='{req_type}'")
     try:
         url = validate_and_clean_url(request.url, is_image_mode=is_img)
     except ValueError as ve:
         print(f"❌ [Analyze Validation Error] {str(ve)}")
         raise HTTPException(status_code=400, detail=str(ve))
 
-    # 1. Comprobar si ya existe (comprobando url normalizada y variaciones www)
+    # 1. Comprobar si ya existe para este usuario (comprobando url normalizada y variaciones www)
     alt_url = url.replace("https://", "https://www.") if "://www." not in url else url.replace("://www.", "://")
     db = await get_connection()
     try:
         cursor = await db.execute(
-            f"{BASE_REEL_SELECT} WHERE r.url = ? OR r.url = ? OR r.url = ?",
-            (url, request.url.strip(), alt_url)
+            f"{BASE_REEL_SELECT} WHERE (r.url = ? OR r.url = ? OR r.url = ?) AND r.user_id = ?",
+            (url, request.url.strip(), alt_url, current_user.id)
         )
         existing = await cursor.fetchone()
         if existing:
@@ -631,7 +763,7 @@ async def analyze_reel(request: ReelAnalyzeRequest):
     if url.startswith("data:image/") and stored_thumb:
         url = stored_thumb
 
-    # 5. Guardar en SQLite de forma atómica
+    # 5. Guardar en SQLite de forma atómica asociado a current_user
     now = datetime.datetime.now(datetime.timezone.utc).isoformat()
     folder_id = request.folder_id if request.folder_id else None
 
@@ -643,8 +775,8 @@ async def analyze_reel(request: ReelAnalyzeRequest):
                 id, url, platform, author, author_url, original_title, thumbnail_url,
                 duration, title, summary, ai_tools, key_steps, prompts, tags,
                 difficulty, estimated_time, status, user_notes, folder_id, media_type,
-                images, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                images, user_id, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 reel_id,
@@ -668,20 +800,21 @@ async def analyze_reel(request: ReelAnalyzeRequest):
                 folder_id,
                 extraction.media_type,
                 json.dumps(stored_images, ensure_ascii=False),
+                current_user.id,
                 now,
                 now,
             )
         )
         await db.commit()
 
-        new_reel = await fetch_reel_by_id(db, reel_id)
+        new_reel = await fetch_reel_by_id(db, reel_id, user_id=current_user.id)
         if not new_reel:
             raise HTTPException(status_code=500, detail="Error al recuperar el reel recién guardado")
         return new_reel
     finally:
         await db.close()
 
-@app.get("/api/reels", response_model=List[ReelResponse], dependencies=[Depends(require_auth)])
+@app.get("/api/reels", response_model=List[ReelResponse])
 async def list_reels(
     q: Optional[str] = Query(None, description="Búsqueda por texto"),
     status: Optional[str] = Query(None, description="pending, tested, favorite"),
@@ -690,10 +823,11 @@ async def list_reels(
     folder_id: Optional[str] = Query(None, description="Filtrar por carpeta ('unassigned' para sin carpeta)"),
     media_type: Optional[str] = Query(None, description="Filtrar por tipo: 'reel' (<10m) o 'video' (>10m)"),
     time: Optional[str] = Query(None, description="Filtrar por tiempo: '< 5 min', '15-30 min', '> 1 hora'"),
+    current_user: CurrentUser = Depends(require_auth),
     db: aiosqlite.Connection = Depends(get_db)
 ):
-    query = f"{BASE_REEL_SELECT} WHERE 1=1"
-    params = []
+    query = f"{BASE_REEL_SELECT} WHERE r.user_id = ?"
+    params = [current_user.id]
 
     if media_type:
         if media_type == 'reel':
@@ -706,7 +840,7 @@ async def list_reels(
         if folder_id in ("unassigned", "none"):
             query += " AND r.folder_id IS NULL"
         else:
-            subtree_ids = await get_folder_subtree_ids(db, folder_id)
+            subtree_ids = await get_folder_subtree_ids(db, folder_id, user_id=current_user.id)
             placeholders = ",".join("?" for _ in subtree_ids)
             query += f" AND r.folder_id IN ({placeholders})"
             params.extend(subtree_ids)
@@ -738,15 +872,24 @@ async def list_reels(
     rows = await cursor.fetchall()
     return [format_reel_row(row) for row in rows]
 
-@app.get("/api/reels/{reel_id}", response_model=ReelResponse, dependencies=[Depends(require_auth)])
-async def get_reel(reel_id: str, db: aiosqlite.Connection = Depends(get_db)):
-    reel = await fetch_reel_by_id(db, reel_id)
+@app.get("/api/reels/{reel_id}", response_model=ReelResponse)
+async def get_reel(
+    reel_id: str,
+    current_user: CurrentUser = Depends(require_auth),
+    db: aiosqlite.Connection = Depends(get_db)
+):
+    reel = await fetch_reel_by_id(db, reel_id, user_id=current_user.id)
     if not reel:
         raise HTTPException(status_code=404, detail="Reel no encontrado.")
     return reel
 
-@app.patch("/api/reels/{reel_id}", response_model=ReelResponse, dependencies=[Depends(require_auth)])
-async def update_reel(reel_id: str, request: ReelUpdateRequest, db: aiosqlite.Connection = Depends(get_db)):
+@app.patch("/api/reels/{reel_id}", response_model=ReelResponse)
+async def update_reel(
+    reel_id: str,
+    request: ReelUpdateRequest,
+    current_user: CurrentUser = Depends(require_auth),
+    db: aiosqlite.Connection = Depends(get_db)
+):
     updates = []
     params = []
 
@@ -783,28 +926,36 @@ async def update_reel(reel_id: str, request: ReelUpdateRequest, db: aiosqlite.Co
         updates.append("updated_at = ?")
         params.append(now)
         params.append(reel_id)
-        cursor = await db.execute(f"UPDATE reels SET {', '.join(updates)} WHERE id = ?", params)
+        params.append(current_user.id)
+        cursor = await db.execute(f"UPDATE reels SET {', '.join(updates)} WHERE id = ? AND user_id = ?", params)
         if cursor.rowcount == 0:
             raise HTTPException(status_code=404, detail="Reel no encontrado.")
         await db.commit()
 
-    updated = await fetch_reel_by_id(db, reel_id)
+    updated = await fetch_reel_by_id(db, reel_id, user_id=current_user.id)
     if not updated:
         raise HTTPException(status_code=404, detail="Reel no encontrado.")
     return updated
 
-@app.delete("/api/reels/{reel_id}", dependencies=[Depends(require_auth)])
-async def delete_reel(reel_id: str, db: aiosqlite.Connection = Depends(get_db)):
-    cursor = await db.execute("DELETE FROM reels WHERE id = ?", (reel_id,))
+@app.delete("/api/reels/{reel_id}")
+async def delete_reel(
+    reel_id: str,
+    current_user: CurrentUser = Depends(require_auth),
+    db: aiosqlite.Connection = Depends(get_db)
+):
+    cursor = await db.execute("DELETE FROM reels WHERE id = ? AND user_id = ?", (reel_id, current_user.id))
     if cursor.rowcount == 0:
         raise HTTPException(status_code=404, detail="Reel no encontrado.")
 
     await db.commit()
     return {"success": True, "message": "Reel eliminado correctamente"}
 
-@app.get("/api/stats", dependencies=[Depends(require_auth)])
-async def get_stats(db: aiosqlite.Connection = Depends(get_db)):
-    # 1. Consulta consolidada en 1 solo pase para todos los contadores
+@app.get("/api/stats")
+async def get_stats(
+    current_user: CurrentUser = Depends(require_auth),
+    db: aiosqlite.Connection = Depends(get_db)
+):
+    # 1. Consulta consolidada en 1 solo pase para todos los contadores del usuario
     cursor = await db.execute("""
         SELECT 
             COUNT(*) as total,
@@ -816,31 +967,32 @@ async def get_stats(db: aiosqlite.Connection = Depends(get_db)):
             COALESCE(SUM(CASE WHEN media_type = 'video' THEN 1 ELSE 0 END), 0) as videos_count,
             COALESCE(SUM(CASE WHEN media_type = 'image' THEN 1 ELSE 0 END), 0) as images_count
         FROM reels
-    """)
+        WHERE user_id = ?
+    """, (current_user.id,))
     counts = dict(await cursor.fetchone())
 
-    # 2. Agregación de herramientas mediante motor JSON nativo de SQLite
+    # 2. Agregación de herramientas de este usuario
     try:
         cursor_tools = await db.execute("""
             SELECT TRIM(value) as name, COUNT(*) as count 
             FROM reels, json_each(reels.ai_tools) 
-            WHERE TRIM(value) != ''
+            WHERE user_id = ? AND TRIM(value) != ''
             GROUP BY LOWER(TRIM(value)) 
             ORDER BY count DESC LIMIT 12
-        """)
+        """, (current_user.id,))
         sorted_tools = [dict(r) for r in await cursor_tools.fetchall()]
     except Exception:
         sorted_tools = []
 
-    # 3. Agregación de etiquetas mediante motor JSON nativo de SQLite
+    # 3. Agregación de etiquetas de este usuario
     try:
         cursor_tags = await db.execute("""
             SELECT LOWER(TRIM(value)) as name, COUNT(*) as count 
             FROM reels, json_each(reels.tags) 
-            WHERE TRIM(value) != ''
+            WHERE user_id = ? AND TRIM(value) != ''
             GROUP BY LOWER(TRIM(value)) 
             ORDER BY count DESC LIMIT 12
-        """)
+        """, (current_user.id,))
         sorted_tags = [dict(r) for r in await cursor_tags.fetchall()]
     except Exception:
         sorted_tags = []
@@ -858,8 +1010,11 @@ async def get_stats(db: aiosqlite.Connection = Depends(get_db)):
         "top_tags": sorted_tags,
     }
 
-@app.get("/api/settings", dependencies=[Depends(require_auth)])
-async def get_settings(db: aiosqlite.Connection = Depends(get_db)):
+@app.get("/api/settings")
+async def get_settings(
+    current_user: CurrentUser = Depends(require_admin),
+    db: aiosqlite.Connection = Depends(get_db)
+):
     cursor = await db.execute("SELECT value FROM app_settings WHERE key = 'gemini_api_key'")
     row = await cursor.fetchone()
     stored_key = decrypt_secret(row["value"]) if (row and row["value"]) else ""
@@ -875,11 +1030,14 @@ async def get_settings(db: aiosqlite.Connection = Depends(get_db)):
         "is_custom_configured": bool(stored_key),
     }
 
-@app.post("/api/settings", dependencies=[Depends(require_auth)])
-async def save_settings(data: AppSettingsSchema, db: aiosqlite.Connection = Depends(get_db)):
+@app.post("/api/settings")
+async def save_settings(
+    data: AppSettingsSchema,
+    current_user: CurrentUser = Depends(require_admin),
+    db: aiosqlite.Connection = Depends(get_db)
+):
     if data.gemini_api_key is not None:
         key_val = data.gemini_api_key.strip()
-        # Cifrar simétricamente con AES-Fernet antes de guardar en SQLite
         encrypted_val = encrypt_secret(key_val) if key_val else ""
         await db.execute(
             """
@@ -898,9 +1056,13 @@ async def save_settings(data: AppSettingsSchema, db: aiosqlite.Connection = Depe
 
 from urllib.parse import quote
 
-@app.get("/api/reels/{reel_id}/markdown", dependencies=[Depends(require_auth)])
-async def export_reel_markdown(reel_id: str, db: aiosqlite.Connection = Depends(get_db)):
-    reel = await fetch_reel_by_id(db, reel_id)
+@app.get("/api/reels/{reel_id}/markdown")
+async def export_reel_markdown(
+    reel_id: str,
+    current_user: CurrentUser = Depends(require_auth),
+    db: aiosqlite.Connection = Depends(get_db)
+):
+    reel = await fetch_reel_by_id(db, reel_id, user_id=current_user.id)
     if not reel:
         raise HTTPException(status_code=404, detail="Reel no encontrado.")
 
@@ -917,15 +1079,17 @@ async def export_reel_markdown(reel_id: str, db: aiosqlite.Connection = Depends(
         }
     )
 
-@app.get("/api/export/vault", dependencies=[Depends(require_auth)])
-async def export_vault_zip(db: aiosqlite.Connection = Depends(get_db)):
-    # 1. Obtener todas las carpetas y construir rutas relativas seguras
-    cursor = await db.execute("SELECT id, name, parent_id FROM folders")
+@app.get("/api/export/vault")
+async def export_vault_zip(
+    current_user: CurrentUser = Depends(require_auth),
+    db: aiosqlite.Connection = Depends(get_db)
+):
+    # 1. Obtener todas las carpetas de este usuario
+    cursor = await db.execute("SELECT id, name, parent_id FROM folders WHERE user_id = ?", (current_user.id,))
     folder_rows = await cursor.fetchall()
     folder_map = {row["id"]: {"name": row["name"], "parent_id": row["parent_id"]} for row in folder_rows}
 
     def sanitize_path_segment(seg: str, fallback: str = "item") -> str:
-        # Prevenir secuencias de traversal y caracteres prohibidos en sistemas de archivos
         cleaned = re.sub(r'[\\/*?:"<>|]', '_', seg).strip().strip('.')
         cleaned = re.sub(r'^\.+', '', cleaned).strip()
         return cleaned if cleaned else fallback
@@ -944,8 +1108,8 @@ async def export_vault_zip(db: aiosqlite.Connection = Depends(get_db)):
         parts.reverse()
         return "/".join(parts) if parts else "Sin clasificar"
 
-    # 2. Obtener todos los reels (límite de seguridad de 1000 fichas para mitigar DoS en memoria)
-    cursor = await db.execute(f"{BASE_REEL_SELECT} ORDER BY r.created_at DESC LIMIT 1000")
+    # 2. Obtener todos los reels de este usuario
+    cursor = await db.execute(f"{BASE_REEL_SELECT} WHERE r.user_id = ? ORDER BY r.created_at DESC LIMIT 1000", (current_user.id,))
     reel_rows = await cursor.fetchall()
     reels = [format_reel_row(row) for row in reel_rows]
 
@@ -953,7 +1117,7 @@ async def export_vault_zip(db: aiosqlite.Connection = Depends(get_db)):
     zip_buffer = io.BytesIO()
     with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
         index_lines = [
-            "# 🧠 Bóveda de Conocimiento ReelMind - Obsidian Export",
+            f"# 🧠 Bóveda de Conocimiento ReelMind ({current_user.username}) - Obsidian Export",
             f"Exportado el: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
             f"Total de recursos guardados: {len(reels)}\n",
             "## 📑 Índice de Recursos por Carpeta\n"
@@ -1022,8 +1186,12 @@ async def optimize_prompt(request: PromptOptimizeRequest):
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Error optimizando prompt con Gemini: {str(e)}")
 
-@app.post("/api/vault/ask", response_model=VaultAskResponse, dependencies=[Depends(require_auth)])
-async def ask_vault(request: VaultAskRequest, db: aiosqlite.Connection = Depends(get_db)):
+@app.post("/api/vault/ask", response_model=VaultAskResponse)
+async def ask_vault(
+    request: VaultAskRequest,
+    current_user: CurrentUser = Depends(require_auth),
+    db: aiosqlite.Connection = Depends(get_db)
+):
     if not request.question.strip():
         raise HTTPException(status_code=400, detail="La pregunta no puede estar vacía.")
 
@@ -1031,7 +1199,7 @@ async def ask_vault(request: VaultAskRequest, db: aiosqlite.Connection = Depends
     if not api_key:
         raise HTTPException(status_code=400, detail="Falta configurar la Gemini API Key.")
 
-    cursor = await db.execute(f"{BASE_REEL_SELECT} ORDER BY r.created_at DESC LIMIT 120")
+    cursor = await db.execute(f"{BASE_REEL_SELECT} WHERE r.user_id = ? ORDER BY r.created_at DESC LIMIT 120", (current_user.id,))
     rows = await cursor.fetchall()
     reels = [format_reel_row(row) for row in rows]
 
