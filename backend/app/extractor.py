@@ -5,6 +5,7 @@ import glob
 import html
 import socket
 import ipaddress
+from pathlib import Path
 from typing import Dict, Any, Optional
 from urllib.parse import urlparse, urlunparse, parse_qsl, urlencode
 import httpx
@@ -652,6 +653,95 @@ def extract_image_content(url: str, temp_prefix: str) -> VideoExtractionResult:
         media_type="image"
     )
 
+def get_cookies_path() -> Optional[str]:
+    """
+    Localiza automáticamente el archivo de cookies (formato Netscape cookies.txt)
+    para permitir descargas autenticadas en Instagram, YouTube, TikTok, etc.
+    Busca en:
+    1. Variable de entorno YT_DLP_COOKIES_PATH
+    2. Directorio de datos de la app (settings.DATA_DIR / cookies.txt)
+    3. Raíz del contenedor /data/cookies.txt
+    4. Carpeta data del proyecto
+    """
+    env_path = os.getenv("YT_DLP_COOKIES_PATH")
+    if env_path and os.path.exists(env_path) and os.path.getsize(env_path) > 0:
+        return env_path
+
+    candidates = [
+        os.path.join(settings.DATA_DIR, "cookies.txt"),
+        os.path.join(settings.DATA_DIR, "cookies", "cookies.txt"),
+        "/data/cookies.txt",
+        os.path.join(str(Path(settings.DATA_DIR).parent), "data", "cookies.txt"),
+        os.path.join(os.getcwd(), "cookies.txt"),
+    ]
+    for candidate in candidates:
+        if os.path.exists(candidate) and os.path.getsize(candidate) > 0:
+            return candidate
+    return None
+
+def translate_extractor_error(error: Exception) -> str:
+    """
+    Traduce y sanitiza los errores crudos de yt-dlp y la red a mensajes
+    claros, concisos y profesionales en español para la interfaz móvil.
+    """
+    err_str = str(error)
+
+    # 1. Instagram
+    if "empty media response" in err_str:
+        return (
+            "Instagram requiere inicio de sesión para acceder a este reel. "
+            "El contenido pertenece a una cuenta privada, tiene restricción de edad o Meta ha bloqueado temporalmente el acceso público anónimo."
+        )
+    if "only available for registered users" in err_str or "who follow this account" in err_str:
+        return "Este reel es de una cuenta privada y solo está disponible para seguidores autorizados de ese perfil."
+    if "redirected to the login page" in err_str or "exceeded the rate-limit for accessing posts anonymously" in err_str:
+        return "Instagram ha limitado temporalmente las peticiones anónimas. Añade cookies.txt en el servidor o inténtalo más tarde."
+    if "No video in this post" in err_str or "no media" in err_str.lower():
+        return "No se encontró ningún vídeo reproducible en este enlace de Instagram."
+
+    # 2. YouTube
+    if "Sign in to confirm your age" in err_str or "confirm you're not a bot" in err_str:
+        return "YouTube requiere verificación de edad o inicio de sesión para reproducir este vídeo."
+    if "Private video" in err_str or "This video is private" in err_str:
+        return "Este vídeo de YouTube es privado y no está disponible para visualización pública."
+    if "Video unavailable" in err_str:
+        return "El vídeo de YouTube no está disponible o ha sido retirado por su autor."
+    if "members-only" in err_str.lower():
+        return "Este vídeo de YouTube es exclusivo para miembros del canal."
+
+    # 3. TikTok
+    if "Post is private" in err_str or "Video not available" in err_str:
+        return "El vídeo de TikTok es privado o no está disponible para visualización pública."
+
+    # 4. X / Twitter
+    if ("Failed to parse JSON" in err_str or "Rate limit" in err_str) and ("twitter" in err_str.lower() or "x.com" in err_str.lower()):
+        return "No se pudo acceder a la publicación de X (Twitter). Puede ser privada, restringida o haber sido eliminada."
+
+    # 5. Facebook
+    if "This content isn't available right now" in err_str or "You must log in to continue" in err_str or ("login" in err_str.lower() and "facebook" in err_str.lower()):
+        return "El contenido de Facebook es privado o requiere iniciar sesión para verlo."
+
+    # 6. Red y conectividad
+    if "timed out" in err_str.lower() or "timeout" in err_str.lower():
+        return "Se agotó el tiempo de espera al conectar con la plataforma. Comprueba tu conexión e inténtalo de nuevo."
+    if "Connection refused" in err_str or "Network is unreachable" in err_str:
+        return "No se pudo establecer conexión con los servidores de la plataforma."
+
+    # 7. Limpieza de boilerplate de terminal de yt-dlp
+    clean = re.sub(r'ERROR:\s*\[[^\]]+\]\s*[^:]*:\s*', '', err_str)
+    clean = re.sub(r'\s*Check if this post is accessible in your browser[^\.]*\.?', '', clean, flags=re.DOTALL)
+    clean = re.sub(r'\s*If it is not, then use --cookies[^\.]*\.?', '', clean, flags=re.DOTALL)
+    clean = re.sub(r'\s*See\s+https?://[^\s]+\s+for how to[^\.]*\.?', '', clean, flags=re.DOTALL)
+    clean = re.sub(r'\s*Confirm you are on the latest version[^\.]*\.?', '', clean, flags=re.DOTALL)
+    clean = re.sub(r'\s*please report this issue[^\.]*\.?', '', clean, flags=re.DOTALL)
+    clean = re.sub(r'\s*Otherwise, if the post is accessible[^\.]*\.?', '', clean, flags=re.DOTALL)
+    clean = clean.strip()
+
+    if clean:
+        return clean
+
+    return "No se pudieron obtener los datos del contenido audiovisual proporcionado."
+
 def extract_video_and_audio(url: str, requested_type: str = "auto") -> VideoExtractionResult:
     cleaned_url = validate_and_clean_url(url, is_image_mode=(requested_type == "image"))
     platform = detect_platform(cleaned_url)
@@ -666,7 +756,7 @@ def extract_video_and_audio(url: str, requested_type: str = "auto") -> VideoExtr
         return extract_image_content(cleaned_url, temp_media_prefix)
 
     try:
-        cookies_path = os.getenv("YT_DLP_COOKIES_PATH")
+        cookies_path = get_cookies_path()
 
         base_headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
@@ -704,7 +794,8 @@ def extract_video_and_audio(url: str, requested_type: str = "auto") -> VideoExtr
                     return extract_image_content(cleaned_url, temp_media_prefix)
                 except Exception as img_err:
                     print(f"⚠️ Extracción como imagen también falló: {img_err}")
-            raise RuntimeError(f"No se pudieron obtener metadatos del contenido proporcionado: {str(e)}")
+            translated = translate_extractor_error(e)
+            raise RuntimeError(translated)
 
         if not info:
             raise RuntimeError("No se pudieron obtener metadatos del vídeo proporcionado.")
